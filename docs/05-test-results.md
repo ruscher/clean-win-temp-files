@@ -10,7 +10,7 @@ O desenvolvimento ocorreu em **Linux** (BigLinux/Manjaro), sem acesso a uma máq
 - Pester 5.7.1 e PSScriptAnalyzer (PowerShell Gallery), fora do repositório;
 - `cmd.exe` do Wine 11.17 em um prefixo isolado, só para o launcher.
 
-**O que não pôde ser executado aqui**: Windows PowerShell 5.1 real, APIs Win32 (P/Invoke), UAC, arquivos bloqueados, ACLs, junctions NTFS, DISM, Delivery Optimization e Lixeira. Esses itens estão no roteiro manual de [04-test-plan.md](04-test-plan.md) e em aberto no [06-release-checklist.md](06-release-checklist.md).
+**O que não pôde ser executado no Linux** (coberto depois pelo CI em Windows, abaixo): Windows PowerShell 5.1 real, APIs Win32 (P/Invoke), UAC, arquivos bloqueados, ACLs, junctions NTFS, DISM, Delivery Optimization e Lixeira. Esses itens estão no roteiro manual de [04-test-plan.md](04-test-plan.md) e em aberto no [06-release-checklist.md](06-release-checklist.md).
 
 ## Resultados
 
@@ -27,7 +27,46 @@ O desenvolvimento ocorreu em **Linux** (BigLinux/Manjaro), sem acesso a uma máq
 | Launcher (`cmd` do Wine) | `.ps1` ausente → mensagem + pausa; linha de comando com caminho absoluto e argumentos preservados; `-PauseOnExit` só com `cmd /c`; pasta com `& ( ) !` e acentos funcionando |
 | Varredura de padrões destrutivos | Nenhum `Remove-Item`, `rd /s`, `del /s`, exclusão recursiva, `/ResetBase` (só no texto de aviso), serviços, escrita no registro, `takeown`/`icacls` ou `Stop-Process` |
 
-## Defeitos encontrados e corrigidos durante os testes
+## Windows real — GitHub Actions (run 37293431722)
+
+Repositório privado `ruscher/clean-win-temp-files`, workflow `.github/workflows/windows-validation.yml`, script `tests/ci-validate.ps1`. Matriz de **4 ambientes**, todos verdes:
+
+| Runner | Windows | PowerShell 5.1 | PowerShell 7 |
+| --- | --- | --- | --- |
+| windows-2022 | Server 2022 21H2, build 20348 (base do Windows 10 21H2) | ✅ | ✅ |
+| windows-2025 | Server 2025, build 26100 (base do Windows 11 24H2) | ✅ | ✅ |
+
+Em cada um dos 4:
+
+- **Pester: 138 aprovados, 0 falhas, 0 pulados**, incluindo arquivo bloqueado real, ACL negada e recusa das pastas reais do sistema;
+- **44 verificações de ponta a ponta aprovadas**, com o programa executado de verdade (processo filho), em fixtures plantadas em pastas reais:
+  - simulação não apaga nada; categoria desconhecida → código 2; `-ListCategories` sem Prefetch;
+  - limpeza real: os antigos (com espaço, Unicode `ção 文件` e somente leitura) removidos, pastas vazias antigas removidas, a pasta Temp mantida, o recente mantido, **o arquivo bloqueado mantido e contado como "em uso"**, **a junction NTFS e o link simbólico mantidos, com o conteúdo por trás intacto**;
+  - `%SystemRoot%\Temp`: arquivo de 5 dias removido e de 1 dia mantido (regra de 72 h);
+  - `CrashDumps`: dump de 40 dias removido, de 5 dias mantido, `.txt` mantido;
+  - `%TEMP%` real em formato 8.3 (`C:\Users\RUNNER~1\...`) expandido e deduplicado;
+  - `%TEMP%`/`%TMP%` apontando para `Documentos\Temp` → categoria abortada, documento intacto, log gravado;
+  - launcher `.bat` com `-Language pt` → código 0, interface em português;
+  - DISM: análise real interpretada nos dois desfechos (2022: "não há limpeza necessária"; 2025: "recomenda limpeza, 2 pacotes");
+  - Delivery Optimization e Lixeira consultadas pelos mecanismos oficiais sem erro;
+  - **usuário padrão real** (conta local criada só para o teste): detectado como "Standard user", Windows Temp marcado "requer administrador", código 0;
+  - o log não contém o caminho do perfil.
+
+Defeitos encontrados pelo CI e corrigidos:
+
+| Defeito | Correção |
+| --- | --- |
+| Quando nada ficava selecionado (por exemplo, categoria abortada por segurança), o log não era gravado | O log passou a ser gravado também nesse caso |
+| "Mantidos por segurança" na revisão contava categorias não selecionadas, divergindo do resumo | Passou a contar só as selecionadas |
+| (script de CI) função auxiliar com o mesmo nome do `New-Fixture` do Pester | Renomeada |
+
+### Ainda não coberto pelo CI
+
+- **Windows 10 e 11 cliente**: os runners são Windows Server com o mesmo kernel e o mesmo PowerShell, mas sem Microsoft Store, Edge em segundo plano etc.
+- **Fluxo interativo do UAC** (aceitar/cancelar o prompt): só é possível manualmente.
+- Lixeira **com itens** e cache da Otimização de Entrega **com conteúdo** (nos runners ambos estavam vazios), e `StartComponentCleanup` real, que não foi executado por levar muito tempo.
+
+## Defeitos encontrados e corrigidos durante os testes (Linux)
 
 | Defeito | Como foi achado | Impacto se não corrigido |
 | --- | --- | --- |

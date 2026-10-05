@@ -170,6 +170,8 @@ Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser -SkipPublisherCheck
 Invoke-Pester -Path .\tests -Output Detailed
 ```
 
+A cada push, o GitHub Actions roda a suíte e uma validação de ponta a ponta com o programa real (`tests/ci-validate.ps1`) no Windows Server 2022 e 2025, com PowerShell 5.1 e 7. **Não execute `ci-validate.ps1` no seu computador**: ele faz uma limpeza real.
+
 Os testes criam fixtures temporárias (arquivos antigos e recentes, somente leitura, nomes com espaço e Unicode, links, pastas aninhadas e vazias, arquivos bloqueados) e nunca tocam em dados reais. O plano e os resultados estão em [docs/04-test-plan.md](docs/04-test-plan.md) e [docs/05-test-results.md](docs/05-test-results.md).
 
 A pasta `docs/` é só documentação de desenvolvimento: o programa não depende dela.

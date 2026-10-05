@@ -1,6 +1,6 @@
 # 06 — Checklist de release
 
-Legenda: `[x]` verificado neste ciclo · `[ ]` pendente (exige Windows real)
+Legenda: `[x]` verificado · `[ ]` pendente (exige Windows cliente ou interação manual). CI: workflow *Windows validation* no GitHub Actions.
 
 ## Código
 
@@ -28,17 +28,19 @@ Legenda: `[x]` verificado neste ciclo · `[ ]` pendente (exige Windows real)
 
 Roteiro detalhado em [04-test-plan.md](04-test-plan.md#roteiro-manual-no-windows-10-e-no-windows-11-antes-de-publicar).
 
-- [ ] Pester completo no Windows PowerShell 5.1 (0 pulados)
-- [ ] Pester completo no PowerShell 7
-- [ ] Windows 10 22H2: roteiro manual 2–16
-- [ ] Windows 11 24H2: roteiro manual 2–16
-- [ ] Usuário padrão (sem administrador) e conta administradora com UAC
-- [ ] Arquivo bloqueado real (`InUse`)
-- [ ] Junction real em `%TEMP%`
-- [ ] Windows em pt-BR e en-US
-- [ ] Delivery Optimization: cmdlet presente/ausente conforme a build
-- [ ] DISM: análise e limpeza, código 3010 (reinicialização)
-- [ ] Lixeira: tamanho antes/depois
+- [x] Pester completo no Windows PowerShell 5.1 (0 pulados) — CI, Server 2022 e 2025
+- [x] Pester completo no PowerShell 7 — CI, Server 2022 e 2025
+- [ ] Windows 10 22H2 cliente: roteiro manual 2–16 (kernel equivalente validado no Server 2022)
+- [ ] Windows 11 24H2 cliente: roteiro manual 2–16 (kernel equivalente validado no Server 2025)
+- [x] Usuário padrão (sem administrador) — CI
+- [ ] Conta administradora com prompt UAC interativo (aceitar e cancelar)
+- [x] Arquivo bloqueado real (`InUse`) — CI
+- [x] Junction e link simbólico reais em `%TEMP%` — CI
+- [ ] Windows em pt-BR (interface pt validada no CI em Windows en-US)
+- [x] Delivery Optimization: consulta oficial sem erro — CI (cache vazio nos runners)
+- [x] DISM: análise e interpretação ("recomendado" e "não necessário") — CI
+- [ ] DISM: `StartComponentCleanup` real e código 3010
+- [ ] Lixeira com itens: tamanho antes/depois (consulta vazia validada no CI)
 - [ ] Pasta do projeto com `%` no nome (não verificável no Wine)
 
 ## Política de release
