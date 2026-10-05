@@ -211,7 +211,9 @@ finally {
     $env:TMP = $savedTmp
 }
 Assert-That 'Run still exits 0' ($run.ExitCode -eq 0) "(exit $($run.ExitCode))"
-Assert-That 'User temp category aborted' ((Get-Category $run 'UserTemp').scanState -eq 'Aborted')
+$userCategory = Get-Category $run 'UserTemp'
+Assert-That 'Run was logged even with nothing to clean' ($null -ne $run.Json)
+Assert-That 'User temp category aborted' ($userCategory -and $userCategory.scanState -eq 'Aborted')
 Assert-That 'Document survived' (Test-Path -LiteralPath $thesis)
 Assert-That 'Abort is visible on screen' ($run.Output -match 'skipped for safety')
 #endregion

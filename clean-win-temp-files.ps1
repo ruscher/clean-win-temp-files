@@ -2222,10 +2222,12 @@ function Show-Review {
             $numbers[$number] = $scan.Category.Id
             $isSelected = [bool]$Selection[$scan.Category.Id]
             Write-CategoryRow -Number $number -Scan $scan -Selected $isSelected
-            if ($isSelected) { $selectedBytes += $scan.Bytes }
+            if ($isSelected) {
+                $selectedBytes += $scan.Bytes
+                $recentFiles += $scan.RecentFiles
+                $recentBytes += $scan.RecentBytes
+            }
             elseif ($group -eq 'Advanced' -and $scan.State -eq 'Ready') { $advancedBytes += $scan.Bytes }
-            $recentFiles += $scan.RecentFiles
-            $recentBytes += $scan.RecentBytes
         }
         Write-Ui ''
     }
@@ -2626,6 +2628,42 @@ function Wait-BeforeExit {
     [void](Read-Host)
 }
 
+function Save-RunLog {
+    # Writes the log (if enabled) and never throws: a log failure must not hide the result.
+    param(
+        [hashtable]$Options,
+        $WindowsInfo,
+        $Context,
+        $Scans,
+        $Results,
+        [string[]]$SelectedIds = @(),
+        [datetime]$Started,
+        [TimeSpan]$Duration,
+        [hashtable]$FreeBefore = @{},
+        [hashtable]$FreeAfter = @{}
+    )
+
+    $outcome = [pscustomobject]@{ Path = $null; Error = $null }
+    if ($Options.NoLog) { return $outcome }
+    try {
+        $logFile = $Options.LogPath
+        $defaultDirectory = $null
+        if (-not $logFile) {
+            $defaultDirectory = Get-DefaultLogDirectory
+            $logFile = Join-PathSafe $defaultDirectory ('cleanup-{0}.log' -f $Started.ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture))
+        }
+        $logOptions = @{ Mode = $Options.Mode; DryRun = [bool]$Options.DryRun; Yes = [bool]$Options.Yes; Selected = $SelectedIds }
+        Write-RunLog -Path $logFile -WindowsInfo $WindowsInfo -Context $Context -Scans $Scans -Results $Results -Options $logOptions `
+            -Started $Started -Duration $Duration -FreeBefore $FreeBefore -FreeAfter $FreeAfter
+        if ($defaultDirectory) { Remove-OldLog -Directory $defaultDirectory }
+        $outcome.Path = $logFile
+    }
+    catch {
+        $outcome.Error = $_.Exception.Message
+    }
+    return $outcome
+}
+
 function Invoke-Main {
     param([hashtable]$Options, [hashtable]$BoundParameters)
 
@@ -2784,6 +2822,11 @@ function Invoke-Main {
     $selectedScans = @($scans | Where-Object { $selection[$_.Category.Id] })
     if ($selectedScans.Count -eq 0) {
         Write-Ui ('  ' + (Get-UiText 'Nothing.Selected')) DarkGray
+        # Still logged: a category aborted for safety must leave a trace.
+        $timer.Stop()
+        $log = Save-RunLog -Options $Options -WindowsInfo $windows -Context $context -Scans $scans -Results @() -Started $started -Duration $timer.Elapsed
+        if ($log.Path) { Write-Ui ('  {0}: {1}' -f (Get-UiText 'Summary.Log'), (Protect-LogText $log.Path)) DarkGray }
+        if ($log.Error) { Write-Ui ('  ' + (Get-UiText 'Summary.LogFailed' @($log.Error))) Yellow }
         return
     }
 
@@ -2818,26 +2861,11 @@ function Invoke-Main {
     foreach ($drive in $drives.Keys) { $freeAfter[$drive] = Get-FreeSpace $drive }
     $timer.Stop()
 
-    $logFile = $null
-    $logError = $null
-    if (-not $Options.NoLog) {
-        try {
-            $logFile = $Options.LogPath
-            $defaultDirectory = $null
-            if (-not $logFile) {
-                $defaultDirectory = Get-DefaultLogDirectory
-                $logFile = Join-PathSafe $defaultDirectory ('cleanup-{0}.log' -f $started.ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture))
-            }
-            $logOptions = @{ Mode = $Options.Mode; DryRun = [bool]$Options.DryRun; Yes = [bool]$Options.Yes; Selected = @($selectedScans | ForEach-Object { $_.Category.Id }) }
-            Write-RunLog -Path $logFile -WindowsInfo $windows -Context $context -Scans $scans -Results $results -Options $logOptions `
-                -Started $started -Duration $timer.Elapsed -FreeBefore $freeBefore -FreeAfter $freeAfter
-            if ($defaultDirectory) { Remove-OldLog -Directory $defaultDirectory }
-        }
-        catch {
-            $logError = $_.Exception.Message
-            $logFile = $null
-        }
-    }
+    $log = Save-RunLog -Options $Options -WindowsInfo $windows -Context $context -Scans $scans -Results $results `
+        -SelectedIds @($selectedScans | ForEach-Object { $_.Category.Id }) -Started $started -Duration $timer.Elapsed `
+        -FreeBefore $freeBefore -FreeAfter $freeAfter
+    $logFile = $log.Path
+    $logError = $log.Error
 
     Show-Summary -Results $results -Duration $timer.Elapsed -FreeBefore $freeBefore -FreeAfter $freeAfter -LogFile (Protect-LogText $logFile) -LogError $logError -DryRun:$Options.DryRun
 
