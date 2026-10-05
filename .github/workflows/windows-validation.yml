@@ -1,0 +1,36 @@
+name: Windows validation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: ${{ matrix.os }} · ${{ matrix.host }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+        host: [powershell, pwsh]   # Windows PowerShell 5.1 and PowerShell 7
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pester + end-to-end validation (real cleanup on the disposable runner)
+        shell: pwsh
+        run: |
+          & ${{ matrix.host }} -NoProfile -ExecutionPolicy Bypass -File tests/ci-validate.ps1 -ResultsPath "$env:RUNNER_TEMP\cwtf-results"
+          exit $LASTEXITCODE
+
+      - name: Upload logs and test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ matrix.os }}-${{ matrix.host }}
+          path: ${{ runner.temp }}/cwtf-results
+          if-no-files-found: warn
