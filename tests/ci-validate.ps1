@@ -55,7 +55,7 @@ function Get-Category($Run, [string]$Id) {
     return $Run.Json.categories | Where-Object { $_.id -eq $Id } | Select-Object -First 1
 }
 
-function New-Fixture([string]$Path, [int]$AgeDays, [int]$Size = 1024) {
+function New-AgedTestFile([string]$Path, [int]$AgeDays, [int]$Size = 1024) {
     [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Path))
     [IO.File]::WriteAllBytes($Path, (New-Object byte[] $Size))
     $stamp = [datetime]::UtcNow.AddDays(-$AgeDays)
@@ -107,19 +107,19 @@ $crashDumps = Join-Path $env:LOCALAPPDATA 'CrashDumps'
 $precious = Join-Path $env:USERPROFILE "$tag-precious"
 
 $old = @(
-    (New-Fixture (Join-Path $userTemp 'old.tmp') 10),
-    (New-Fixture (Join-Path $userTemp 'nome com espaço ção 文件.tmp') 10),
-    (New-Fixture (Join-Path $userTemp 'deep\a\b\old.log') 10 4096)
+    (New-AgedTestFile (Join-Path $userTemp 'old.tmp') 10),
+    (New-AgedTestFile (Join-Path $userTemp 'nome com espaço ção 文件.tmp') 10),
+    (New-AgedTestFile (Join-Path $userTemp 'deep\a\b\old.log') 10 4096)
 )
-$readOnly = New-Fixture (Join-Path $userTemp 'readonly.tmp') 10
+$readOnly = New-AgedTestFile (Join-Path $userTemp 'readonly.tmp') 10
 [IO.File]::SetAttributes($readOnly, [IO.FileAttributes]::ReadOnly)
 $old += $readOnly
 foreach ($dir in @('deep\a\b', 'deep\a', 'deep')) { Set-DirectoryAge (Join-Path $userTemp $dir) 10 }
 
-$recent = New-Fixture (Join-Path $userTemp 'recent.tmp') 0
-$locked = New-Fixture (Join-Path $userTemp 'locked.tmp') 10
-$keep = New-Fixture (Join-Path $precious 'keep.txt') 10
-$keepDeep = New-Fixture (Join-Path $precious 'sub\keep2.txt') 10
+$recent = New-AgedTestFile (Join-Path $userTemp 'recent.tmp') 0
+$locked = New-AgedTestFile (Join-Path $userTemp 'locked.tmp') 10
+$keep = New-AgedTestFile (Join-Path $precious 'keep.txt') 10
+$keepDeep = New-AgedTestFile (Join-Path $precious 'sub\keep2.txt') 10
 $junction = Join-Path $userTemp 'junction-to-precious'
 New-Item -ItemType Junction -Path $junction -Target $precious | Out-Null
 $fileLink = Join-Path $userTemp 'file-link.tmp'
@@ -129,11 +129,11 @@ foreach ($link in @($junction, $fileLink)) {
     try { [IO.File]::SetLastWriteTimeUtc($link, $stamp) } catch { Write-Verbose 'link time not settable' }
 }
 
-$winOld = New-Fixture (Join-Path $windowsTemp "$tag-old.tmp") 5
-$winNew = New-Fixture (Join-Path $windowsTemp "$tag-new.tmp") 1
-$dumpOld = New-Fixture (Join-Path $crashDumps "$tag-old.dmp") 40
-$dumpNew = New-Fixture (Join-Path $crashDumps "$tag-new.dmp") 5
-$dumpOther = New-Fixture (Join-Path $crashDumps "$tag-old.txt") 40
+$winOld = New-AgedTestFile (Join-Path $windowsTemp "$tag-old.tmp") 5
+$winNew = New-AgedTestFile (Join-Path $windowsTemp "$tag-new.tmp") 1
+$dumpOld = New-AgedTestFile (Join-Path $crashDumps "$tag-old.dmp") 40
+$dumpNew = New-AgedTestFile (Join-Path $crashDumps "$tag-new.dmp") 5
+$dumpOther = New-AgedTestFile (Join-Path $crashDumps "$tag-old.txt") 40
 Write-Host "  planted fixtures under $userTemp, $windowsTemp, $crashDumps and $precious"
 #endregion
 
@@ -198,7 +198,7 @@ Assert-That 'Log does not contain the profile path' (-not ((Get-Content -Literal
 Write-Section '%TEMP% pointing into Documents'
 $documents = [Environment]::GetFolderPath('MyDocuments')
 $badTemp = Join-Path $documents "Temp\$tag"
-$thesis = New-Fixture (Join-Path $badTemp 'thesis.docx') 30
+$thesis = New-AgedTestFile (Join-Path $badTemp 'thesis.docx') 30
 $savedTemp = $env:TEMP
 $savedTmp = $env:TMP
 $env:TEMP = $badTemp

@@ -19,7 +19,7 @@ jobs:
         os: [windows-2022, windows-2025]
         host: [powershell, pwsh]   # Windows PowerShell 5.1 and PowerShell 7
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Pester + end-to-end validation (real cleanup on the disposable runner)
         shell: pwsh
