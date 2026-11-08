@@ -108,6 +108,17 @@ Describe 'powercfg parsing' {
         $result.ExitCode | Should -Be 3
         $result.Output | Should -Match 'visible'
         $result.Output | Should -Not -Match 'hidden'
+        $result.TimedOut | Should -BeFalse
+    }
+
+    It 'kills a Windows tool that hangs instead of blocking the health check' {
+        $ping = Join-Path $env:SystemRoot 'System32\PING.EXE'
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        $result = Invoke-QuietTool -FilePath $ping -Arguments @('-n', '30', '127.0.0.1') -TimeoutSeconds 2
+        $timer.Stop()
+        $result.TimedOut | Should -BeTrue
+        $result.ExitCode | Should -Be -1
+        $timer.Elapsed.TotalSeconds | Should -BeLessThan 10 -Because 'the 30-second ping must be killed after 2 seconds'
     }
 }
 

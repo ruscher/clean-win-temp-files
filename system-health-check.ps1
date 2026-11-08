@@ -557,8 +557,10 @@ function Invoke-QuietTool {
         captured and discarded: powercfg prints "Unable to perform operation" on PCs without a
         battery, which must not leak into the report, and Windows PowerShell 5.1 turns a
         redirected native error stream into a terminating error under ErrorAction Stop.
+        A tool that hangs (for example a faulty battery driver) is killed after the timeout and
+        reported with TimedOut and exit code -1, so the health check never blocks.
     #>
-    param([Parameter(Mandatory = $true)][string]$FilePath, [string[]]$Arguments = @())
+    param([Parameter(Mandatory = $true)][string]$FilePath, [string[]]$Arguments = @(), [int]$TimeoutSeconds = 60)
 
     $quoted = foreach ($argument in $Arguments) {
         if ($argument -match '[\s"]') { '"' + $argument.Replace('"', '\"') + '"' } else { $argument }
@@ -573,11 +575,18 @@ function Invoke-QuietTool {
 
     $process = [Diagnostics.Process]::Start($info)
     try {
-        $errors = $process.StandardError.ReadToEndAsync()   # read both streams: no pipe deadlock
-        $output = $process.StandardOutput.ReadToEnd()
-        $process.WaitForExit()
-        [void]$errors.Result
-        return [pscustomobject]@{ ExitCode = $process.ExitCode; Output = $output }
+        # Both streams are read in the background (no pipe deadlock) and every wait is bounded.
+        $output = $process.StandardOutput.ReadToEndAsync()
+        $errors = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            try { $process.Kill() } catch { Write-Verbose "Could not stop $FilePath" }
+            # Never wait on the read tasks here: a child process may still hold the pipes open.
+            return [pscustomobject]@{ ExitCode = -1; Output = ''; TimedOut = $true }
+        }
+        $text = ''
+        if ($output.Wait(5000)) { $text = $output.Result }
+        [void]$errors.Wait(5000)
+        return [pscustomobject]@{ ExitCode = $process.ExitCode; Output = $text; TimedOut = $false }
     }
     finally { $process.Dispose() }
 }
@@ -586,8 +595,9 @@ function Get-BatteryReport {
     $file = Join-Path ([IO.Path]::GetTempPath()) ('cwtf-battery-{0}.xml' -f [guid]::NewGuid().ToString('N'))
     try {
         $powercfg = Join-Path $env:SystemRoot 'System32\powercfg.exe'
-        [void](Invoke-QuietTool -FilePath $powercfg -Arguments @('/batteryreport', '/xml', '/output', $file, '/duration', '1'))
-        if (-not [IO.File]::Exists($file)) { return @() }
+        $run = Invoke-QuietTool -FilePath $powercfg -Arguments @('/batteryreport', '/xml', '/output', $file, '/duration', '1')
+        # A failed or killed run leaves no report (or a partial one): treat it as no battery data.
+        if ($run.ExitCode -ne 0 -or -not [IO.File]::Exists($file)) { return @() }
         return ConvertFrom-BatteryReportXml -Xml ([xml][IO.File]::ReadAllText($file))
     }
     catch { return @() }
