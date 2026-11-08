@@ -147,7 +147,8 @@ Feche o Chrome, o Edge, o Teams e o WhatsApp antes: o cache de um programa abert
 | **Saúde da bateria** (capacidade atual × original) e ação de bateria crítica | `powercfg /batteryreport /xml`, `powercfg /q` |
 | Temperaturas | Zonas térmicas ACPI (quando o firmware as expõe ao Windows) |
 | CPU limitada pelo firmware e **teste de carga** | Kernel-Processor-Power 37 e contadores de desempenho do processador |
-| Discos, erros de disco/NTFS, erros de hardware (WHEA), memória, tempo ligado e idade da BIOS | `Get-PhysicalDisk`, logs do sistema, CIM |
+| Discos, erros de disco/NTFS, erros de hardware (WHEA), memória (com os apps que mais consomem), tempo ligado e idade da BIOS | `Get-PhysicalDisk`, logs do sistema, CIM |
+| **Manutenção**: reinicialização pendente, Inicialização Rápida, falhas do Windows Update explicadas, programas que abrem com o Windows (os opcionais vêm marcados), Sensor de Armazenamento e Microsoft Defender | Registro (só leitura), WindowsUpdateClient 19/20, `Get-MpComputerStatus` |
 
 No fim aparece o **diagnóstico**: a causa mais provável e se há evidência de superaquecimento (troca de pasta térmica necessária ou só preventiva). Exemplo real de um notebook que "desligava do nada":
 

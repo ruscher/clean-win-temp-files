@@ -228,6 +228,82 @@ Describe 'Diagnosis' {
     }
 }
 
+Describe 'Maintenance helpers' {
+    It 'reads the Task Manager startup state (<Bytes> -> <Expected>)' -ForEach @(
+        @{ Bytes = @(2, 0, 0, 0); Expected = $true },
+        @{ Bytes = @(6, 0, 0, 0); Expected = $true },
+        @{ Bytes = @(3, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8); Expected = $false },
+        @{ Bytes = @(7, 0, 0, 0); Expected = $false }
+    ) {
+        Test-StartupApprovedEnabled ([byte[]]$Bytes) | Should -Be $Expected
+    }
+
+    It 'treats a program without a StartupApproved entry as enabled' {
+        Test-StartupApprovedEnabled $null | Should -BeTrue
+    }
+
+    It 'reads Store startup task state <State> as enabled=<Expected>' -ForEach @(
+        @{ State = 0; Expected = $false }, @{ State = 1; Expected = $false }, @{ State = 2; Expected = $true },
+        @{ State = 3; Expected = $false }, @{ State = 4; Expected = $true }
+    ) {
+        Test-StartupTaskEnabled $State | Should -Be $Expected
+    }
+
+    It 'names Store packages <Package> as <Expected>' -ForEach @(
+        @{ Package = '5319275A.WhatsAppDesktop_cv1g1gvanyjgm'; Expected = 'WhatsApp' },
+        @{ Package = 'MSTeams_8wekyb3d8bbwe'; Expected = 'Microsoft Teams' },
+        @{ Package = 'Microsoft.YourPhone_8wekyb3d8bbwe'; Expected = 'Phone Link' },
+        @{ Package = '7EE7776C.LinkedInforWindows_w1wdnht996qgy'; Expected = 'LinkedInforWindows' },
+        @{ Package = 'Contoso.Notes_abc123'; Expected = 'Contoso.Notes' }
+    ) {
+        ConvertTo-StartupTaskName $Package | Should -Be $Expected
+    }
+
+    It 'suggests only optional startup programs: <Name> -> <Expected>' -ForEach @(
+        @{ Name = 'Adobe Acrobat Synchronizer'; Expected = $true },
+        @{ Name = 'Microsoft.Lists'; Expected = $true },
+        @{ Name = 'Phone Link'; Expected = $true },
+        @{ Name = 'Intel Graphics Command Center'; Expected = $true },
+        @{ Name = 'OneDrive'; Expected = $false },
+        @{ Name = 'Dropbox'; Expected = $false },
+        @{ Name = 'SecurityHealth'; Expected = $false },
+        @{ Name = 'RtkAudUService'; Expected = $false },
+        @{ Name = 'PJeOffice Pro'; Expected = $false },
+        @{ Name = 'SACMonitor'; Expected = $false },
+        @{ Name = 'Microsoft Teams'; Expected = $false }
+    ) {
+        Test-OptionalStartupItem $Name | Should -Be $Expected
+    }
+
+    It 'classifies Windows Update error <Code> as <Expected>' -ForEach @(
+        @{ Code = '0x80073D02'; Expected = 'AppInUse' },
+        @{ Code = '0x80240016'; Expected = 'Busy' },
+        @{ Code = '0x80072EE2'; Expected = 'Network' },
+        @{ Code = '0x8024402C'; Expected = 'Network' },
+        @{ Code = '0x80070005'; Expected = 'Other' }
+    ) {
+        Get-WindowsUpdateErrorKind $Code | Should -Be $Expected
+    }
+
+    It 'lists the programs that start with Windows without failing' {
+        $programs = @(Get-StartupProgram)
+        foreach ($program in $programs) {
+            $program.Name | Should -Not -BeNullOrEmpty
+            $program.Enabled | Should -BeOfType [bool]
+        }
+        @($programs | Group-Object Name | Where-Object { $_.Count -gt 1 }).Count | Should -Be 0 -Because 'each program is listed once'
+    }
+
+    It 'runs the maintenance section and reports Windows Update, Storage Sense and antivirus' {
+        $facts = @{ UptimeDays = 1.0; MemoryUsedPercent = 50.0 }
+        $findings = @(Invoke-MaintenanceCheck -Since ([datetime]::Now.AddDays(-7)) -Facts $facts)
+        $findings.Count | Should -BeGreaterThan 0
+        foreach ($finding in $findings) { $finding.Area | Should -Be 'Maintenance' }
+        @($findings | Where-Object { $_.Text -match 'Storage Sense' }).Count | Should -Be 1
+        @($findings | Where-Object { $_.Text -match 'Defender|Antivirus' }).Count | Should -Be 1
+    }
+}
+
 Describe 'Event log queries and the load test' {
     It 'treats "no events found" as empty and records real query failures' {
         $script:EventFailures.Clear()

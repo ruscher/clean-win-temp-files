@@ -17,6 +17,8 @@
       - temperatures (ACPI thermal zones, when the firmware exposes them)
       - CPU limited by the firmware (Kernel-Processor-Power 37) and an optional load test
       - disk health, disk/NTFS errors, WHEA hardware errors, memory, uptime and BIOS age
+      - maintenance: pending restart, Fast Startup, Windows Update failures, programs that
+        start with Windows (optional ones are pointed out), Storage Sense and Defender status
 
 .PARAMETER Days
     How many days of event log to analyze. Default: 30.
@@ -99,6 +101,32 @@ $script:Text = @{
         'Section.Power'          = 'BATTERY AND POWER'
         'Section.Thermal'        = 'TEMPERATURE AND PERFORMANCE'
         'Section.Hardware'       = 'DISKS AND HARDWARE'
+        'Section.Maintenance'    = 'MAINTENANCE AND PERFORMANCE'
+        'Sys.MemoryTop'          = '{0}: {1}'
+        'Sys.MemorySmall.Advice' = 'With 8 GB, Teams, browsers and other apps open together fill the memory: close what you are not using, remove unneeded startup apps or, if the model allows it, add RAM.'
+        'Maint.RestartUpdates'   = 'Windows is waiting for a restart to finish installing updates.'
+        'Maint.RestartFiles'     = 'There are files waiting to be replaced at the next restart.'
+        'Maint.Restart.Advice'   = 'Save your work and use Start > Power > Restart (not Shut down).'
+        'Maint.FastStartup'      = 'Fast Startup is on: "Shut down" saves the Windows session instead of closing it, so only "Restart" really restarts Windows. Restart at least once a week.'
+        'Maint.UpdatesOk'        = 'Windows Update: {0} update(s) installed, no failures.'
+        'Maint.UpdatesFailed'    = 'Windows Update: {0} failed install(s) and {1} successful one(s).'
+        'Maint.UpdateCode'       = '{0,4}x  {1} — {2}'
+        'Maint.UpdateKind.AppInUse' = 'the app was open during its update (it retries; closing the app or restarting solves it)'
+        'Maint.UpdateKind.Busy'  = 'another installation was in progress (a restart solves it)'
+        'Maint.UpdateKind.Network' = 'could not reach the update server (check the internet connection)'
+        'Maint.UpdateKind.Other' = 'other error'
+        'Maint.Updates.Advice'   = 'Restart, then open Settings > Windows Update and click "Check for updates". If an error repeats, run Settings > System > Troubleshoot > Other troubleshooters > Windows Update.'
+        'Maint.Startup'          = '{0} program(s) start with Windows; {1} of them are optional (marked with *).'
+        'Maint.Startup.Advice'   = 'Turn off the optional ones you do not use every day in Settings > Apps > Startup: {0}. They still open normally when you click them.'
+        'Maint.StorageSenseOn'   = 'Storage Sense is on.'
+        'Maint.StorageSenseOff'  = 'Storage Sense is off.'
+        'Maint.StorageSense.Advice' = 'Turn it on in Settings > System > Storage to remove temporary files automatically; set the Recycle Bin and Downloads options to "Never" if you prefer to decide yourself.'
+        'Maint.DefenderOk'       = 'Microsoft Defender: real-time protection on, definitions {0} day(s) old.'
+        'Maint.DefenderOld'      = 'Microsoft Defender definitions are {0} days old.'
+        'Maint.DefenderOff'      = 'Microsoft Defender real-time protection is off.'
+        'Maint.DefenderOff.Advice' = 'Turn it on in Windows Security > Virus & threat protection, unless another antivirus is installed.'
+        'Maint.DefenderUnknown'  = 'Antivirus status unavailable (another antivirus may be installed).'
+        'Bat.Bios.Advice'        = 'Replace the battery before updating the BIOS: manufacturers require a healthy battery during the update, and a power loss in the middle of it can leave the PC unable to start.'
         'Section.Verdict'        = 'DIAGNOSIS'
         'Sys.Model'              = '{0} {1} · BIOS {2} ({3})'
         'Sys.Cpu'                = '{0} · {1} cores / {2} threads'
@@ -196,6 +224,32 @@ $script:Text = @{
         'Section.Power'          = 'BATERIA E ENERGIA'
         'Section.Thermal'        = 'TEMPERATURA E DESEMPENHO'
         'Section.Hardware'       = 'DISCOS E HARDWARE'
+        'Section.Maintenance'    = 'MANUTENÇÃO E DESEMPENHO'
+        'Sys.MemoryTop'          = '{0}: {1}'
+        'Sys.MemorySmall.Advice' = 'Com 8 GB, Teams, navegadores e outros apps abertos ao mesmo tempo enchem a memória: feche o que não estiver usando, tire da inicialização o que não precisa ou, se o modelo permitir, amplie a RAM.'
+        'Maint.RestartUpdates'   = 'O Windows está esperando uma reinicialização para concluir atualizações.'
+        'Maint.RestartFiles'     = 'Há arquivos esperando para ser substituídos na próxima reinicialização.'
+        'Maint.Restart.Advice'   = 'Salve o que estiver fazendo e use Iniciar > Energia > Reiniciar (não Desligar).'
+        'Maint.FastStartup'      = 'A Inicialização Rápida está ativa: "Desligar" guarda a sessão do Windows em vez de encerrá-la, então só "Reiniciar" reinicia o Windows de verdade. Reinicie pelo menos uma vez por semana.'
+        'Maint.UpdatesOk'        = 'Windows Update: {0} atualização(ões) instalada(s), nenhuma falha.'
+        'Maint.UpdatesFailed'    = 'Windows Update: {0} instalação(ões) com falha e {1} com sucesso.'
+        'Maint.UpdateCode'       = '{0,4}x  {1} — {2}'
+        'Maint.UpdateKind.AppInUse' = 'o app estava aberto durante a atualização (ela tenta de novo; fechar o app ou reiniciar resolve)'
+        'Maint.UpdateKind.Busy'  = 'havia outra instalação em andamento (reiniciar resolve)'
+        'Maint.UpdateKind.Network' = 'não conseguiu falar com o servidor de atualizações (verifique a internet)'
+        'Maint.UpdateKind.Other' = 'outro erro'
+        'Maint.Updates.Advice'   = 'Reinicie e depois abra Configurações > Windows Update > "Verificar se há atualizações". Se um erro se repetir, use Configurações > Sistema > Solução de problemas > Outros solucionadores > Windows Update.'
+        'Maint.Startup'          = '{0} programa(s) abrem junto com o Windows; {1} deles são opcionais (marcados com *).'
+        'Maint.Startup.Advice'   = 'Desative os opcionais que você não usa todo dia em Configurações > Aplicativos > Inicialização: {0}. Eles continuam abrindo normalmente quando você clica neles.'
+        'Maint.StorageSenseOn'   = 'O Sensor de Armazenamento está ativo.'
+        'Maint.StorageSenseOff'  = 'O Sensor de Armazenamento está desligado.'
+        'Maint.StorageSense.Advice' = 'Ative em Configurações > Sistema > Armazenamento para apagar temporários automaticamente; deixe as opções da Lixeira e de Downloads em "Nunca" se preferir decidir por conta própria.'
+        'Maint.DefenderOk'       = 'Microsoft Defender: proteção em tempo real ativa, definições de {0} dia(s).'
+        'Maint.DefenderOld'      = 'As definições do Microsoft Defender têm {0} dias.'
+        'Maint.DefenderOff'      = 'A proteção em tempo real do Microsoft Defender está desligada.'
+        'Maint.DefenderOff.Advice' = 'Ative em Segurança do Windows > Proteção contra vírus e ameaças, a não ser que outro antivírus esteja instalado.'
+        'Maint.DefenderUnknown'  = 'Estado do antivírus indisponível (outro antivírus pode estar instalado).'
+        'Bat.Bios.Advice'        = 'Troque a bateria antes de atualizar a BIOS: os fabricantes exigem bateria em bom estado durante a atualização, e uma queda de energia no meio dela pode deixar o PC sem ligar.'
         'Section.Verdict'        = 'DIAGNÓSTICO'
         'Sys.Model'              = '{0} {1} · BIOS {2} ({3})'
         'Sys.Cpu'                = '{0} · {1} núcleos / {2} threads'
@@ -518,6 +572,66 @@ function Get-Diagnosis {
     return [pscustomobject]@{ Causes = $causes.ToArray(); ThermalPaste = $paste }
 }
 
+function Test-StartupApprovedEnabled {
+    # Explorer\StartupApproved values: the first byte is even (02, 06) when the entry is
+    # enabled and odd (03, 07) when the user disabled it in Task Manager or Settings.
+    param([AllowNull()][object]$Value)
+    $bytes = @($Value)
+    if ($bytes.Count -eq 0 -or $null -eq $bytes[0]) { return $true }
+    return ([int]$bytes[0] % 2) -eq 0
+}
+
+function Test-StartupTaskEnabled {
+    # Store app startup tasks: 2 = enabled, 4 = enabled by policy; 0, 1, 3 = disabled.
+    param([AllowNull()][object]$State)
+    return @(2, 4) -contains [int]$State
+}
+
+function ConvertTo-StartupTaskName {
+    # Friendly name for a Store package family (5319275A.WhatsAppDesktop_cv1g... -> WhatsApp).
+    param([string]$PackageFamily)
+    $known = [ordered]@{
+        'MSTeams'                 = 'Microsoft Teams'
+        'WhatsAppDesktop'         = 'WhatsApp'
+        'YourPhone'               = 'Phone Link'
+        'CrossDevice'             = 'Phone Link (CrossDevice)'
+        'IntelGraphicsExperience' = 'Intel Graphics Command Center'
+        'SpotifyMusic'            = 'Spotify'
+        'GamingApp'               = 'Xbox'
+        'MicrosoftOfficeHub'      = 'Microsoft 365 (Office)'
+        'WindowsTerminal'         = 'Windows Terminal'
+    }
+    $name = ($PackageFamily -split '_')[0]
+    foreach ($key in $known.Keys) { if ($name -like "*$key*") { return $known[$key] } }
+    $parts = $name -split '\.'
+    if ($parts.Count -gt 1 -and $parts[0] -match '^[0-9A-F]{6,}$') { return ($parts | Select-Object -Skip 1) -join '.' }
+    return $name
+}
+
+function Test-OptionalStartupItem {
+    <#
+        Apps that are commonly started with Windows but are not needed for the PC to work and
+        open quickly on demand. Sync clients, security, audio, drivers and digital-certificate
+        tools are never suggested.
+    #>
+    param([string]$Name)
+    $keep = 'OneDrive|Dropbox|GoogleDrive|Google Drive|SecurityHealth|Defender|Realtek|RtkAud|Waves|Synaptics|ELAN|Intel.*(Audio|Bluetooth)|PJe|SafeNet|SACMonitor|Certificate|aetcrss|Token'
+    $optional = 'Acrobat Synchronizer|AdobeCollabSync|AdobeARM|Microsoft\.Lists|Phone Link|YourPhone|CrossDevice|Intel Graphics|Spotify|Steam|Discord|Skype|EpicGames|CCleaner|LinkedIn|Xbox|MicrosoftEdgeAutoLaunch|iTunesHelper|Zoom|Cortana|Opera Browser Assistant'
+    if ($Name -match $keep) { return $false }
+    return $Name -match $optional
+}
+
+function Get-WindowsUpdateErrorKind {
+    # Groups Windows Update install errors (event 20) by what the user can do about them.
+    param([string]$Code)
+    switch -Regex ($Code) {
+        '(?i)^0x80073D02$' { return 'AppInUse' }                       # the app was running during its update
+        '(?i)^0x(80240016|8024001E)$' { return 'Busy' }                # another install in progress / shutting down
+        '(?i)^0x(80072EE2|80072EE7|80072EFD|80072EFE|8024402C|80244022|8024401C|80240438)$' { return 'Network' }
+        default { return 'Other' }
+    }
+}
+
 #endregion
 
 #region Collectors (read-only)
@@ -754,6 +868,7 @@ function Invoke-SystemCheck {
         $findings.Add((New-Finding 'System' 'Info' (Get-Text 'Sys.Os' @($os.Caption, $os.BuildNumber))))
         $boot = [datetime]$os.LastBootUpTime
         $uptime = ([datetime]::Now - $boot).TotalDays
+        $Facts.UptimeDays = $uptime
         $status = if ($uptime -gt 14) { 'Warn' } else { 'Ok' }
         $advice = @(); if ($uptime -gt 14) { $advice = @(Get-Text 'Sys.Uptime.Advice') }
         $findings.Add((New-Finding 'System' $status (Get-Text 'Sys.Uptime' @($uptime, (Format-Time $boot))) -Advice $advice))
@@ -762,9 +877,21 @@ function Invoke-SystemCheck {
         $free = [double]$os.FreePhysicalMemory * 1KB
         if ($total -gt 0) {
             $used = 100.0 * (1 - $free / $total)
+            $Facts.MemoryUsedPercent = $used
             $status = if ($used -ge 90) { 'Warn' } else { 'Ok' }
-            $advice = @(); if ($used -ge 90) { $advice = @(Get-Text 'Sys.Memory.Advice') }
-            $findings.Add((New-Finding 'System' $status (Get-Text 'Sys.Memory' @((Format-ByteSize $free), (Format-ByteSize $total), $used)) -Advice $advice))
+            $advice = New-Object System.Collections.Generic.List[string]
+            if ($used -ge 90) { $advice.Add((Get-Text 'Sys.Memory.Advice')) }
+            if ($used -ge 75 -and $total -le 8.5GB) { $advice.Add((Get-Text 'Sys.MemorySmall.Advice')) }
+            $details = @()
+            if ($used -ge 75) {
+                # Which apps use the memory, grouped by name (a browser runs as many processes).
+                $details = @(Get-Process -ErrorAction SilentlyContinue | Group-Object ProcessName |
+                        ForEach-Object { [pscustomobject]@{ Name = $_.Name; Bytes = [double]($_.Group | Measure-Object WorkingSet64 -Sum).Sum } } |
+                        Where-Object { $_.Name -notin @('Idle', 'System', 'Registry', 'Memory Compression') } |
+                        Sort-Object Bytes -Descending | Select-Object -First 5 |
+                        ForEach-Object { Get-Text 'Sys.MemoryTop' @($_.Name, (Format-ByteSize $_.Bytes)) })
+            }
+            $findings.Add((New-Finding 'System' $status (Get-Text 'Sys.Memory' @((Format-ByteSize $free), (Format-ByteSize $total), $used)) -Details $details -Advice $advice.ToArray()))
         }
     }
     try {
@@ -879,7 +1006,7 @@ function Invoke-PowerCheck {
         $label = (@($battery.Manufacturer, $battery.Chemistry) | Where-Object { $_ }) -join ' '
         $details = @(); if ($battery.CycleCount -gt 0) { $details = @(Get-Text 'Bat.Cycles' @($battery.CycleCount)) }
         $advice = @()
-        if ($status -eq 'Critical') { $advice = @((Get-Text 'Bat.Dead.Advice'), (Get-Text 'Bat.Charger.Advice')) }
+        if ($status -eq 'Critical') { $advice = @((Get-Text 'Bat.Dead.Advice'), (Get-Text 'Bat.Charger.Advice'), (Get-Text 'Bat.Bios.Advice')) }
         elseif ($status -eq 'Warn') { $advice = @(Get-Text 'Bat.Worn.Advice') }
         $health = 0; if ($null -ne $battery.HealthPercent) { $health = $battery.HealthPercent }
         $text = Get-Text 'Bat.Health' @($battery.Name, $label, (Format-EnergyWh $battery.FullChargeCapacity), (Format-EnergyWh $battery.DesignCapacity), $health)
@@ -1000,6 +1127,135 @@ function Invoke-HardwareCheck {
     return $findings.ToArray()
 }
 
+function Get-RegistryValueMap {
+    # Name -> value of a registry key (read-only); empty when the key does not exist.
+    param([string]$Path)
+    $map = @{}
+    try {
+        $item = Get-ItemProperty -LiteralPath $Path -ErrorAction Stop
+        foreach ($property in $item.PSObject.Properties) {
+            if ($property.Name -notmatch '^PS(Path|ParentPath|ChildName|Drive|Provider)$') { $map[$property.Name] = $property.Value }
+        }
+    }
+    catch { Write-Verbose "Registry key not available: $Path" }
+    return $map
+}
+
+function Get-StartupProgram {
+    # Programs started at sign-in: Run keys, Startup folders and Store app startup tasks.
+    $items = New-Object System.Collections.Generic.List[object]
+    $approvedRoot = 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved'
+    $runKeys = @(
+        @{ Run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; Approved = "HKCU:\$approvedRoot\Run" },
+        @{ Run = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run'; Approved = "HKLM:\$approvedRoot\Run" },
+        @{ Run = 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run'; Approved = "HKLM:\$approvedRoot\Run32" }
+    )
+    foreach ($key in $runKeys) {
+        $approved = Get-RegistryValueMap $key.Approved
+        foreach ($name in @((Get-RegistryValueMap $key.Run).Keys)) {
+            $enabled = $true
+            if ($approved.ContainsKey($name)) { $enabled = Test-StartupApprovedEnabled $approved[$name] }
+            $items.Add([pscustomobject]@{ Name = [string]$name; Enabled = $enabled })
+        }
+    }
+    $folders = @(
+        @{ Path = [Environment]::GetFolderPath('Startup'); Approved = "HKCU:\$approvedRoot\StartupFolder" },
+        @{ Path = [Environment]::GetFolderPath('CommonStartup'); Approved = "HKLM:\$approvedRoot\StartupFolder" }
+    )
+    foreach ($folder in $folders) {
+        if (-not $folder.Path -or -not [IO.Directory]::Exists($folder.Path)) { continue }
+        $approved = Get-RegistryValueMap $folder.Approved
+        foreach ($file in (New-Object IO.DirectoryInfo($folder.Path)).GetFiles()) {
+            if ($file.Name -ieq 'desktop.ini') { continue }
+            $enabled = $true
+            if ($approved.ContainsKey($file.Name)) { $enabled = Test-StartupApprovedEnabled $approved[$file.Name] }
+            $items.Add([pscustomobject]@{ Name = [IO.Path]::GetFileNameWithoutExtension($file.Name); Enabled = $enabled })
+        }
+    }
+    $appModel = 'HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData'
+    foreach ($package in @(Get-ChildItem -LiteralPath $appModel -ErrorAction SilentlyContinue)) {
+        foreach ($task in @(Get-ChildItem -LiteralPath $package.PSPath -ErrorAction SilentlyContinue)) {
+            if ($task.PSChildName -match '^\{?[0-9a-fA-F]{8}-') { continue }   # GUID keys are not startup tasks
+            $state = (Get-RegistryValueMap $task.PSPath)['State']
+            if ($null -eq $state) { continue }
+            $items.Add([pscustomobject]@{ Name = (ConvertTo-StartupTaskName $package.PSChildName); Enabled = (Test-StartupTaskEnabled $state) })
+        }
+    }
+    # One line per program: a program listed in two places counts once, enabled if either is.
+    $aliases = @{ 'Teams' = 'Microsoft Teams'; 'com.squirrel.Teams.Teams' = 'Microsoft Teams' }
+    foreach ($item in $items) { if ($aliases.ContainsKey($item.Name)) { $item.Name = $aliases[$item.Name] } }
+    return @($items | Group-Object Name | ForEach-Object {
+            [pscustomobject]@{ Name = $_.Name; Enabled = [bool](@($_.Group | Where-Object { $_.Enabled }).Count) }
+        })
+}
+
+function Invoke-MaintenanceCheck {
+    param([datetime]$Since, [hashtable]$Facts)
+    $findings = New-Object System.Collections.Generic.List[object]
+
+    # Restart pending and Fast Startup.
+    $session = Get-RegistryValueMap 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager'
+    $updatesPending = (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') -or
+        (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')
+    $filesPending = $session.ContainsKey('PendingFileRenameOperations') -and @($session['PendingFileRenameOperations'] | Where-Object { $_ }).Count -gt 0
+    $fastStartup = (Get-RegistryValueMap 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power')['HiberbootEnabled'] -eq 1
+    $uptime = 0.0; if ($Facts.ContainsKey('UptimeDays') -and $Facts.UptimeDays) { $uptime = [double]$Facts.UptimeDays }
+    if ($updatesPending) { $findings.Add((New-Finding 'Maintenance' 'Warn' (Get-Text 'Maint.RestartUpdates') -Advice @(Get-Text 'Maint.Restart.Advice'))) }
+    elseif ($filesPending) { $findings.Add((New-Finding 'Maintenance' 'Info' (Get-Text 'Maint.RestartFiles') -Advice @(Get-Text 'Maint.Restart.Advice'))) }
+    if ($fastStartup -and ($uptime -gt 7 -or $updatesPending -or $filesPending)) {
+        $findings.Add((New-Finding 'Maintenance' 'Info' (Get-Text 'Maint.FastStartup')))
+    }
+
+    # Windows Update: failed installs (event 20) and successful ones (event 19).
+    $updates = @(Get-EventSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WindowsUpdateClient'; Id = 19, 20; StartTime = $Since })
+    $failed = @($updates | Where-Object { $_.Id -eq 20 })
+    $succeeded = @($updates | Where-Object { $_.Id -eq 19 })
+    if ($failed.Count -eq 0) {
+        if ($succeeded.Count -gt 0) { $findings.Add((New-Finding 'Maintenance' 'Ok' (Get-Text 'Maint.UpdatesOk' @($succeeded.Count)))) }
+    }
+    else {
+        $codes = @($failed | ForEach-Object { if ([string]$_.Message -match '0x[0-9A-Fa-f]{8}') { $Matches[0].ToUpperInvariant().Replace('0X', '0x') } else { '?' } })
+        $kinds = @($codes | ForEach-Object { Get-WindowsUpdateErrorKind $_ })
+        $details = @($codes | Group-Object | Sort-Object Count -Descending | Select-Object -First 4 | ForEach-Object {
+                Get-Text 'Maint.UpdateCode' @($_.Count, $_.Name, (Get-Text "Maint.UpdateKind.$(Get-WindowsUpdateErrorKind $_.Name)"))
+            })
+        $benign = @($kinds | Where-Object { $_ -notin @('AppInUse', 'Busy') }).Count -eq 0
+        $advice = if ($benign) { @(Get-Text 'Maint.Restart.Advice') } else { @(Get-Text 'Maint.Updates.Advice') }
+        $findings.Add((New-Finding 'Maintenance' $(if ($benign) { 'Info' } else { 'Warn' }) (Get-Text 'Maint.UpdatesFailed' @($failed.Count, $succeeded.Count)) -Details $details -Advice $advice))
+    }
+
+    # Programs started with Windows.
+    $startup = @(Get-StartupProgram | Where-Object { $_.Enabled } | Sort-Object Name)
+    if ($startup.Count -gt 0) {
+        $optional = @($startup | Where-Object { Test-OptionalStartupItem $_.Name })
+        $memory = 0.0; if ($Facts.ContainsKey('MemoryUsedPercent') -and $Facts.MemoryUsedPercent) { $memory = [double]$Facts.MemoryUsedPercent }
+        $status = if ($optional.Count -gt 0 -and $memory -ge 75) { 'Warn' } else { 'Info' }
+        $names = @($startup | ForEach-Object { if (Test-OptionalStartupItem $_.Name) { $_.Name + ' *' } else { $_.Name } })
+        $advice = @(); if ($optional.Count -gt 0) { $advice = @(Get-Text 'Maint.Startup.Advice' @((($optional | Select-Object -ExpandProperty Name) -join ', '))) }
+        $findings.Add((New-Finding 'Maintenance' $status (Get-Text 'Maint.Startup' @($startup.Count, $optional.Count)) -Details @($names -join ', ') -Advice $advice))
+    }
+
+    # Storage Sense.
+    $storageSense = (Get-RegistryValueMap 'HKCU:\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy')['01']
+    if ($storageSense -eq 1) { $findings.Add((New-Finding 'Maintenance' 'Ok' (Get-Text 'Maint.StorageSenseOn'))) }
+    else { $findings.Add((New-Finding 'Maintenance' 'Info' (Get-Text 'Maint.StorageSenseOff') -Advice @(Get-Text 'Maint.StorageSense.Advice'))) }
+
+    # Microsoft Defender.
+    try {
+        $defender = Get-MpComputerStatus -ErrorAction Stop
+        if (-not $defender.RealTimeProtectionEnabled) {
+            $findings.Add((New-Finding 'Maintenance' 'Warn' (Get-Text 'Maint.DefenderOff') -Advice @(Get-Text 'Maint.DefenderOff.Advice')))
+        }
+        elseif ($defender.AntivirusSignatureAge -gt 7) {
+            $findings.Add((New-Finding 'Maintenance' 'Warn' (Get-Text 'Maint.DefenderOld' @($defender.AntivirusSignatureAge)) -Advice @(Get-Text 'Maint.Updates.Advice')))
+        }
+        else { $findings.Add((New-Finding 'Maintenance' 'Ok' (Get-Text 'Maint.DefenderOk' @($defender.AntivirusSignatureAge)))) }
+    }
+    catch { $findings.Add((New-Finding 'Maintenance' 'Info' (Get-Text 'Maint.DefenderUnknown'))) }
+
+    return $findings.ToArray()
+}
+
 #endregion
 
 #region Main
@@ -1069,6 +1325,7 @@ function Invoke-HealthCheck {
         @{ Title = 'Section.Shutdowns'; Run = { Invoke-ShutdownCheck -Since $since -Facts $facts } },
         @{ Title = 'Section.Power'; Run = { Invoke-PowerCheck -Since $since -Facts $facts } },
         @{ Title = 'Section.Thermal'; Run = { Invoke-ThermalCheck -Since $since -Facts $facts -LoadSeconds $LoadSeconds } },
+        @{ Title = 'Section.Maintenance'; Run = { Invoke-MaintenanceCheck -Since $since -Facts $facts } },
         @{ Title = 'Section.Hardware'; Run = { Invoke-HardwareCheck -Since $since -Facts $facts } }
     )
     foreach ($section in $sections) {
