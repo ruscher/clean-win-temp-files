@@ -78,6 +78,7 @@ $script:AppVersion = '2.1.0'
 $script:ExitCode = 0
 $script:Ui = $null
 $script:Report = New-Object System.Collections.Generic.List[string]
+$script:EventFailures = New-Object System.Collections.Generic.List[string]
 
 # Battery health (full charge capacity / design capacity).
 $script:BatteryWarnPercent = 70
@@ -156,6 +157,7 @@ $script:Text = @{
         'Load.Throttled'         = 'Under full load the CPU drops below its base clock: thermal or power throttling.'
         'Load.Throttled.Advice'  = 'Clean the fan and vents and replace the thermal paste; if it persists, check the charger and battery.'
         'Load.Hint'              = 'Tip: run with -LoadTest 60 to measure throttling under full load.'
+        'Load.NoSamples'         = 'The load test collected no CPU samples (too short?). Run it for at least 10 seconds.'
         'Disk.Row'               = '{0} ({1}, {2}): {3}'
         'Disk.Smart'             = '{0}: {1} °C · wear {2}% · uncorrected read errors {3}'
         'Disk.Bad.Advice'        = 'Back up your files now and replace this disk.'
@@ -171,6 +173,8 @@ $script:Text = @{
         'Verdict.BlueScreen'     = 'Blue screens were recorded: check drivers, Windows updates and the RAM.'
         'Verdict.PowerLoss'      = 'The PC lost power without a blue screen: battery, charger, power outlet or the power button held down.'
         'Verdict.Unexplained'    = 'Windows did not shut down cleanly {0} time(s), but the logs do not say why (no power-loss or blue-screen record). Watch whether it happens again and run the manufacturer''s hardware diagnostics.'
+        'Verdict.Incomplete'     = 'No cause was found, but part of the event log could not be read, so this result may be incomplete.'
+        'Log.Failed'             = 'Part of the event log could not be read ({0} query(ies)); causes that depend on it may be missing.'
         'Verdict.None'           = 'No unexpected shutdown, forced hibernation or crash in the last {0} days.'
         'Paste.Needed'           = 'Thermal paste: there IS evidence of overheating. Clean the fan and vents and replace the thermal paste.'
         'Paste.Unconfirmed'      = 'Thermal paste: no sign of overheating in the logs, but the temperature could not be measured here. Run -LoadTest 60 or HWiNFO to confirm.'
@@ -250,6 +254,7 @@ $script:Text = @{
         'Load.Throttled'         = 'Sob carga total a CPU cai abaixo da frequência base: estrangulamento térmico ou de energia.'
         'Load.Throttled.Advice'  = 'Limpe a ventoinha e as saídas de ar e troque a pasta térmica; se continuar, verifique carregador e bateria.'
         'Load.Hint'              = 'Dica: use -LoadTest 60 para medir o estrangulamento sob carga total.'
+        'Load.NoSamples'         = 'O teste de carga não coletou amostras da CPU (curto demais?). Rode por pelo menos 10 segundos.'
         'Disk.Row'               = '{0} ({1}, {2}): {3}'
         'Disk.Smart'             = '{0}: {1} °C · desgaste {2}% · erros de leitura não corrigidos {3}'
         'Disk.Bad.Advice'        = 'Faça backup dos seus arquivos agora e troque este disco.'
@@ -265,6 +270,8 @@ $script:Text = @{
         'Verdict.BlueScreen'     = 'Houve telas azuis: verifique drivers, atualizações do Windows e a memória RAM.'
         'Verdict.PowerLoss'      = 'O PC perdeu energia sem tela azul: bateria, carregador, tomada ou botão liga/desliga segurado.'
         'Verdict.Unexplained'    = 'O Windows não foi desligado corretamente {0} vez(es), mas os logs não dizem por quê (sem registro de perda de energia nem de tela azul). Observe se volta a acontecer e rode o diagnóstico de hardware do fabricante.'
+        'Verdict.Incomplete'     = 'Nenhuma causa foi encontrada, mas parte do log de eventos não pôde ser lida; o resultado pode estar incompleto.'
+        'Log.Failed'             = 'Parte do log de eventos não pôde ser lida ({0} consulta(s)); causas que dependem dele podem não aparecer.'
         'Verdict.None'           = 'Nenhum desligamento inesperado, hibernação forçada ou travamento nos últimos {0} dias.'
         'Paste.Needed'           = 'Pasta térmica: HÁ sinais de superaquecimento. Limpe a ventoinha e as saídas de ar e troque a pasta térmica.'
         'Paste.Unconfirmed'      = 'Pasta térmica: nenhum sinal de superaquecimento nos logs, mas a temperatura não pôde ser medida aqui. Rode com -LoadTest 60 ou use o HWiNFO para confirmar.'
@@ -484,6 +491,7 @@ function Get-Diagnosis {
     $blueScreens = [int](& $get 'BlueScreens' 0) + [int](& $get 'BugCheckShutdowns' 0)
     $powerLoss = [int](& $get 'PowerLossShutdowns' 0)
     $unexpected = [int](& $get 'UnexpectedShutdowns' 0)
+    $logIncomplete = [bool](& $get 'EventLogIncomplete' $false)
     $health = & $get 'BatteryHealth' $null
     $maxTemp = & $get 'MaxTemperature' $null
     $throttled = [bool](& $get 'Throttled' $false)
@@ -500,7 +508,8 @@ function Get-Diagnosis {
     if ($unexpected -gt 0 -and -not ($causes.Contains('Thermal') -or $causes.Contains('BlueScreen') -or $causes.Contains('PowerLoss'))) {
         $causes.Add('Unexplained')
     }
-    if ($causes.Count -eq 0) { $causes.Add('None') }
+    # Nothing found is only "none" when the event log could actually be read.
+    if ($causes.Count -eq 0) { $causes.Add($(if ($logIncomplete) { 'Incomplete' } else { 'None' })) }
 
     $paste = 'Preventive'
     if ($thermalEvents -gt 0 -or $throttled -or ($null -ne $maxTemp -and $maxTemp -ge $script:TempCriticalCelsius)) { $paste = 'Needed' }
@@ -522,10 +531,21 @@ function Test-IsAdministrator {
 }
 
 function Get-EventSafe {
-    # Get-WinEvent reports "no events found" as an error; here it is just an empty result.
+    <#
+        Get-WinEvent reports "no events found" as an error; here it is just an empty result.
+        Any other failure (missing log, access denied, event log service unavailable) is
+        recorded in $script:EventFailures, so the diagnosis never presents missing data as
+        "nothing happened".
+    #>
     param([hashtable]$Filter)
     try { return @(Get-WinEvent -FilterHashtable $Filter -ErrorAction Stop) }
-    catch { return @() }
+    catch {
+        if ([string]$_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*') {
+            $source = ('{0} {1}' -f $Filter['LogName'], (@($Filter['ProviderName']) -join ',')).Trim()
+            $script:EventFailures.Add(('{0}: {1}' -f $source, $_.Exception.Message))
+        }
+        return @()
+    }
 }
 
 function Get-EventDataMap {
@@ -911,10 +931,21 @@ function Invoke-ThermalCheck {
         Write-Line ('  ' + (Get-Text 'Load.Running' @($LoadSeconds, [Environment]::ProcessorCount))) DarkGray
         $test = Invoke-CpuLoadTest -Seconds $LoadSeconds
         $summary = Get-LoadTestSummary -Samples $test.Samples -BaseMhz $sample.BaseMhz
-        $Facts.LoadTestRan = $true
+        # The temperature is measured separately from the CPU samples: keep it either way.
+        if ($null -ne $test.MaxTemperature -and ($null -eq $Facts.MaxTemperature -or $test.MaxTemperature -gt $Facts.MaxTemperature)) { $Facts.MaxTemperature = $test.MaxTemperature }
+        if (-not $summary) {
+            # No usable samples (for example a 1-second test): it cannot support a verdict.
+            if ($null -ne $test.MaxTemperature) {
+                $status = 'Ok'
+                if ($test.MaxTemperature -ge $script:TempCriticalCelsius) { $status = 'Critical' } elseif ($test.MaxTemperature -ge $script:TempWarnCelsius) { $status = 'Warn' }
+                $advice = @(); if ($status -ne 'Ok') { $advice = @(Get-Text 'Temp.Hot.Advice') }
+                $findings.Add((New-Finding 'Thermal' $status (Get-Text 'Load.TempMax' @($test.MaxTemperature)) -Advice $advice))
+            }
+            $findings.Add((New-Finding 'Thermal' 'Info' (Get-Text 'Load.NoSamples')))
+        }
         if ($summary) {
+            $Facts.LoadTestRan = $true
             $Facts.Throttled = $summary.Throttled
-            if ($null -ne $test.MaxTemperature -and ($null -eq $Facts.MaxTemperature -or $test.MaxTemperature -gt $Facts.MaxTemperature)) { $Facts.MaxTemperature = $test.MaxTemperature }
             $details = New-Object System.Collections.Generic.List[string]
             $details.Add((Get-Text 'Load.Result' @($LoadSeconds, $summary.PeakMhz, $summary.SustainedMhz, $summary.SustainedPercent, $summary.MinLimitPercent)))
             if ($null -ne $test.MaxTemperature) { $details.Add((Get-Text 'Load.TempMax' @($test.MaxTemperature))) }
@@ -983,8 +1014,12 @@ function Write-Diagnosis {
             'BlueScreen' { Write-Finding (New-Finding 'Verdict' 'Critical' (Get-Text 'Verdict.BlueScreen')) }
             'PowerLoss' { Write-Finding (New-Finding 'Verdict' 'Warn' (Get-Text 'Verdict.PowerLoss')) }
             'Unexplained' { Write-Finding (New-Finding 'Verdict' 'Warn' (Get-Text 'Verdict.Unexplained' @($Facts.UnexpectedShutdowns))) }
+            'Incomplete' { Write-Finding (New-Finding 'Verdict' 'Warn' (Get-Text 'Verdict.Incomplete') -Details @($script:EventFailures | Select-Object -First 3)) }
             default { Write-Finding (New-Finding 'Verdict' 'Ok' (Get-Text 'Verdict.None' @($Days))) }
         }
+    }
+    if ($Facts.ContainsKey('EventLogIncomplete') -and $Facts.EventLogIncomplete -and $Diagnosis.Causes -notcontains 'Incomplete') {
+        Write-Finding (New-Finding 'Verdict' 'Warn' (Get-Text 'Log.Failed' @($script:EventFailures.Count)) -Details @($script:EventFailures | Select-Object -First 3))
     }
     $status = switch ($Diagnosis.ThermalPaste) { 'Needed' { 'Critical' } 'Unconfirmed' { 'Info' } default { 'Ok' } }
     Write-Finding (New-Finding 'Verdict' $status (Get-Text "Paste.$($Diagnosis.ThermalPaste)"))
@@ -1020,6 +1055,7 @@ function Invoke-HealthCheck {
     $isAdmin = Test-IsAdministrator
     $facts = @{ BatteryHealth = $null; MaxTemperature = $null; LoadTestRan = $false; Throttled = $false }
     $all = New-Object System.Collections.Generic.List[object]
+    $script:EventFailures.Clear()
 
     Write-Line ''
     Write-Line ('  {0}  {1}' -f (Get-Text 'App'), $script:AppVersion) White
@@ -1047,6 +1083,10 @@ function Invoke-HealthCheck {
         }
     }
 
+    if ($script:EventFailures.Count -gt 0) {
+        $facts.EventLogIncomplete = $true
+        $facts.EventLogFailures = $script:EventFailures.Count
+    }
     $diagnosis = Get-Diagnosis -Facts $facts
     Write-Section (Get-Text 'Section.Verdict')
     Write-Diagnosis -Diagnosis $diagnosis -Facts $facts -Days $Days

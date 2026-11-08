@@ -71,7 +71,7 @@ Fontes consultadas em 2026-10-05; links ao final.
 
 ## Modo Deep
 
-`-Mode Deep` existe para quem abre `%TEMP%` ou a pasta do navegador depois da limpeza e ainda encontra gigabytes: na Limpeza segura todo cache é opcional, então ele nunca era limpo sem uma escolha explícita. O modo Deep pré-seleciona `CrashDumps`, `BrowserCache`, `ServiceWorkerCache`, `AppCache` e `ShaderCache`. Continua valendo tudo o que está acima: idade mínima, navegador/app fechado, links ignorados, arquivos em uso preservados. **Nunca** pré-seleciona a Lixeira nem o DISM, e `-Exclude` continua tendo prioridade. Na tela interativa, `[R]` analisa de novo depois que o usuário fecha o navegador ou o app.
+`-Mode Deep` existe para quem abre `%TEMP%` ou a pasta do navegador depois da limpeza e ainda encontra gigabytes: na Limpeza segura todo cache é opcional, então ele nunca era limpo sem uma escolha explícita. O modo Deep pré-seleciona `CrashDumps`, `BrowserCache`, `ServiceWorkerCache`, `AppCache` e `ShaderCache`. Continua valendo tudo o que está acima: idade mínima, navegador/app fechado, links ignorados, arquivos em uso preservados. **Nunca** pré-seleciona a Lixeira nem o DISM, e `-Exclude` continua tendo prioridade. O cache offline (Service Worker) aparece em duas categorias: `ServiceWorkerCache` para os navegadores e `AppCache` para os apps WebView2; para preservar os dois, use `-Exclude ServiceWorkerCache,AppCache`. Na tela interativa, `[R]` analisa de novo depois que o usuário fecha o navegador ou o app.
 
 ## Arquivos em uso e acesso negado
 

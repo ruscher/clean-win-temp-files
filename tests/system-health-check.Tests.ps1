@@ -215,10 +215,37 @@ Describe 'Diagnosis' {
         (Get-Diagnosis -Facts @{ UnexpectedShutdowns = 1; PowerLossShutdowns = 1 }).Causes | Should -Not -Contain 'Unexplained'
     }
 
+    It 'does not say "nothing found" when part of the event log could not be read' {
+        (Get-Diagnosis -Facts @{ EventLogIncomplete = $true }).Causes | Should -Be @('Incomplete')
+        $withCause = Get-Diagnosis -Facts @{ EventLogIncomplete = $true; BatterySleeps = 3; BatteryHealth = 3 }
+        $withCause.Causes | Should -Be @('Battery') -Because 'a cause that was found is still reported; the warning is shown apart'
+    }
+
     It 'finds nothing on a healthy PC and says the temperature was not measured' {
         $diagnosis = Get-Diagnosis -Facts @{}
         $diagnosis.Causes | Should -Be @('None')
         $diagnosis.ThermalPaste | Should -Be 'Unconfirmed'
+    }
+}
+
+Describe 'Event log queries and the load test' {
+    It 'treats "no events found" as empty and records real query failures' {
+        $script:EventFailures.Clear()
+        @(Get-EventSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 65000 }) | Should -HaveCount 0
+        $script:EventFailures.Count | Should -Be 0 -Because 'an empty result is not a failure'
+
+        @(Get-EventSafe @{ LogName = 'CwtfNoSuchLog'; Id = 1 }) | Should -HaveCount 0
+        $script:EventFailures.Count | Should -Be 1
+        $script:EventFailures[0] | Should -Match 'CwtfNoSuchLog'
+        $script:EventFailures.Clear()
+    }
+
+    It 'does not count a load test without CPU samples as a completed test' {
+        # 1 second ends before the first sample is taken (sampling starts after 2 seconds).
+        $facts = @{ MaxTemperature = $null; LoadTestRan = $false; Throttled = $false }
+        $findings = @(Invoke-ThermalCheck -Since ([datetime]::Now.AddDays(-1)) -Facts $facts -LoadSeconds 1)
+        $facts.LoadTestRan | Should -BeFalse
+        $findings.Text | Should -Contain (Get-Text 'Load.NoSamples')
     }
 }
 
