@@ -167,6 +167,24 @@ Describe 'Diagnosis' {
         $diagnosis.Causes | Should -Contain 'PowerLoss'
     }
 
+    It 'treats a Kernel-Power 41 with a stop code as a blue screen even without BugCheck 1001' {
+        $diagnosis = Get-Diagnosis -Facts @{ UnexpectedShutdowns = 1; BugCheckShutdowns = 1 }
+        $diagnosis.Causes | Should -Contain 'BlueScreen'
+        $diagnosis.Causes | Should -Not -Contain 'Unexplained'
+    }
+
+    It 'never says "nothing found" after an unclean shutdown the logs cannot explain' {
+        # Only EventLog 6008: no Kernel-Power 41 details, no blue screen, no thermal event.
+        $diagnosis = Get-Diagnosis -Facts @{ UnexpectedShutdowns = 2 }
+        $diagnosis.Causes | Should -Be @('Unexplained')
+
+        $withBattery = Get-Diagnosis -Facts @{ UnexpectedShutdowns = 1; BatterySleeps = 4; BatteryHealth = 3 }
+        $withBattery.Causes | Should -Contain 'Battery'
+        $withBattery.Causes | Should -Contain 'Unexplained' -Because 'battery hibernations do not explain an unclean shutdown'
+
+        (Get-Diagnosis -Facts @{ UnexpectedShutdowns = 1; PowerLossShutdowns = 1 }).Causes | Should -Not -Contain 'Unexplained'
+    }
+
     It 'finds nothing on a healthy PC and says the temperature was not measured' {
         $diagnosis = Get-Diagnosis -Facts @{}
         $diagnosis.Causes | Should -Be @('None')

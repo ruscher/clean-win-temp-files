@@ -241,17 +241,25 @@ Assert-That 'Deep mode is recorded in the JSON log' ($run.Json -and $run.Json.mo
 Write-Section 'System health check (read-only)'
 $healthTool = Join-Path $root 'system-health-check.ps1'
 $healthReports = Join-Path $ResultsPath 'health'
-$healthOutput = '' | & $hostExe -NoProfile -ExecutionPolicy Bypass -File $healthTool -NoColor -Language en -Days 7 -LoadTest 6 -ReportPath $healthReports 2>&1 | Out-String
-$healthCode = $LASTEXITCODE
+$healthLauncher = Join-Path $root 'system-health-check.bat'
+# Windows PowerShell 5.1 turns redirected native stderr into a terminating error under
+# ErrorAction Stop. Capture it as text instead, so a stray error line fails the assertion
+# below rather than aborting the remaining checks and the fixture cleanup.
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $healthOutput = '' | & $hostExe -NoProfile -ExecutionPolicy Bypass -File $healthTool -NoColor -Language en -Days 7 -LoadTest 6 -ReportPath $healthReports 2>&1 | Out-String
+    $healthCode = $LASTEXITCODE
+    $healthBat = cmd.exe /d /c "`"$healthLauncher`" -NoReport -Language pt -Days 3 < NUL" 2>&1 | Out-String
+    $healthBatCode = $LASTEXITCODE
+}
+finally { $ErrorActionPreference = $previousPreference }
 Write-Host ($healthOutput.TrimEnd())
 Assert-That 'Health check exits 0 or 3 (3 = problems found)' (@(0, 3) -contains $healthCode) "(exit $healthCode)"
 Assert-That 'Health check shows every section' (($healthOutput -match 'SHUTDOWNS') -and ($healthOutput -match 'BATTERY AND POWER') -and ($healthOutput -match 'TEMPERATURE') -and ($healthOutput -match 'DIAGNOSIS'))
 Assert-That 'Health check had no unexpected errors' ($healthOutput -notmatch 'Unexpected error')
 Assert-That 'Health check ran the load test' ($healthOutput -match 'Load test')
 Assert-That 'Health check wrote the JSON report' ($null -ne (Get-ChildItem -LiteralPath $healthReports -Filter 'health-*.json' -ErrorAction SilentlyContinue | Select-Object -First 1))
-$healthLauncher = Join-Path $root 'system-health-check.bat'
-$healthBat = cmd.exe /d /c "`"$healthLauncher`" -NoReport -Language pt -Days 3 < NUL" 2>&1 | Out-String
-$healthBatCode = $LASTEXITCODE
 Write-Host ($healthBat.TrimEnd())
 Assert-That 'Health check launcher exits 0 or 3' (@(0, 3) -contains $healthBatCode) "(exit $healthBatCode)"
 Assert-That 'Health check launcher shows the Portuguese UI' ($healthBat -match 'BATERIA E ENERGIA')

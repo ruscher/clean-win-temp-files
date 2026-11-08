@@ -101,7 +101,7 @@ Pressione **A** na tela principal. Nada aqui é pré-selecionado, e cada item mo
 | Lixeira | Todos os itens da Lixeira (API oficial do Windows) | **Os itens não poderão mais ser restaurados.** Pede confirmação |
 | Despejos de falha e relatórios antigos | `MEMORY.DMP`, `Minidump`, `LiveKernelReports`, `CrashDumps` e relatórios do Windows Error Reporting | Só com **mais de 30 dias**; os recentes ficam para diagnosticar telas azuis e travamentos |
 | Cache dos navegadores | Chrome, Edge, Brave, Vivaldi e Chromium (todos os perfis): `Cache`, `Code Cache`, `GPUCache` e os caches de shaders `Dawn*`, `GrShaderCache`, `ShaderCache`, além dos pacotes baixados em `component_crx_cache`/`extensions_crx_cache`. Opera: `Cache`, `Code Cache`, `GPUCache`. Firefox: `cache2`, `startupCache`, `thumbnails`, `jumpListCache` | Sites carregam mais devagar no início. **Logins, cookies, senhas, histórico e favoritos não são tocados.** Navegador aberto é ignorado |
-| Cache offline de sites (Service Worker) | `Service Worker\CacheStorage` de cada perfil Chromium: cópias de páginas, scripts e mídia que os sites guardam para funcionar offline. Costuma ser a **maior pasta do navegador** (vários GB) | Apps web baixam os arquivos de novo; quem usa um site offline perde a cópia local até a próxima visita online. Logins e cookies ficam. Navegador aberto é ignorado |
+| Cache offline de sites (Service Worker) | `Service Worker\CacheStorage` de cada perfil Chromium: cópias de páginas, scripts e mídia que os sites guardam para funcionar offline. Costuma ser a **maior pasta do navegador** (vários GB) | Os sites baixam os arquivos de novo quando precisam. Sites e apps web que funcionam offline perdem a cópia local, e quando ela volta **depende do site**: alguns só a recriam quando o service worker é atualizado, então o uso offline pode ficar indisponível até lá. Logins e cookies ficam. Navegador aberto é ignorado |
 | Cache de apps (Teams, WhatsApp...) | Mesmos caches do Chromium dentro do WebView2 do **novo Teams**, do **WhatsApp** e do **novo Outlook** | O app abre mais devagar uma vez. Login, configurações e mensagens ficam. App aberto é ignorado |
 | Cache de shaders DirectX e GPU | `D3DSCache` e caches de shaders dos drivers NVIDIA, AMD e Intel | Jogos podem engasgar até os shaders serem recompilados. Útil após trocar de driver ou se houver problemas gráficos |
 | Limpeza de componentes (DISM) | Versões substituídas de componentes do Windows Update, via `DISM /StartComponentCleanup` | Lenta (5 a 30 min). Antes, o Windows analisa e só limpa se recomendar. **Nunca usa `/ResetBase`**, então as atualizações continuam desinstaláveis |
@@ -113,7 +113,7 @@ Use quando, depois de limpar, você abre `%TEMP%` ou a pasta do navegador e aind
 ```powershell
 .\clean-win-temp-files.ps1 -Mode Deep               # interativo
 .\clean-win-temp-files.ps1 -Mode Deep -Yes          # sem perguntas
-clean-win-temp-files.bat -Mode Deep                 # pelo .bat (pede administrador para incluir os temporários do Windows)
+.\clean-win-temp-files.bat -Mode Deep               # pelo .bat (pede administrador para incluir os temporários do Windows)
 ```
 
 Feche o Chrome, o Edge, o Teams e o WhatsApp antes: o cache de um programa aberto é sempre ignorado. Se esquecer, feche-os e pressione **R** na tela de revisão para analisar de novo.
@@ -217,7 +217,7 @@ Os caminhos do perfil aparecem como `%USERPROFILE%`/`%LOCALAPPDATA%`, e os nomes
 | `-Mode Safe\|Advanced\|Deep` | `Advanced` já analisa e exibe as opções avançadas; `Deep` também pré-seleciona os caches descartáveis (nunca a Lixeira nem o DISM) |
 | `-Include <IDs>` | Seleciona categorias extras (ex.: `RecycleBin,CrashDumps`) |
 | `-Exclude <IDs>` | Desmarca categorias |
-| `-Yes` | Sem perguntas (para tarefas agendadas). Sem `-Include`, só limpa a seleção segura |
+| `-Yes` | Sem perguntas (para tarefas agendadas). Limpa a seleção padrão do modo escolhido, mais `-Include`, menos `-Exclude`: nos modos `Safe` e `Advanced` só a limpeza segura; no `-Mode Deep` também os caches do modo Deep |
 | `-NoElevate` | Não oferece reiniciar como administrador |
 | `-ListCategories` | Lista os IDs: `UserTemp`, `WindowsTemp`, `StoreAppTemp`, `DeliveryOptimization`, `RecycleBin`, `CrashDumps`, `BrowserCache`, `ServiceWorkerCache`, `AppCache`, `ShaderCache`, `ComponentStore` |
 | `-LogPath`, `-NoLog` | Local do log / desativa o log |

@@ -170,6 +170,7 @@ $script:Text = @{
         'Verdict.Thermal'        = 'Most likely cause: overheating. The PC shut down or hibernated because of critical temperature.'
         'Verdict.BlueScreen'     = 'Blue screens were recorded: check drivers, Windows updates and the RAM.'
         'Verdict.PowerLoss'      = 'The PC lost power without a blue screen: battery, charger, power outlet or the power button held down.'
+        'Verdict.Unexplained'    = 'Windows did not shut down cleanly {0} time(s), but the logs do not say why (no power-loss or blue-screen record). Watch whether it happens again and run the manufacturer''s hardware diagnostics.'
         'Verdict.None'           = 'No unexpected shutdown, forced hibernation or crash in the last {0} days.'
         'Paste.Needed'           = 'Thermal paste: there IS evidence of overheating. Clean the fan and vents and replace the thermal paste.'
         'Paste.Unconfirmed'      = 'Thermal paste: no sign of overheating in the logs, but the temperature could not be measured here. Run -LoadTest 60 or HWiNFO to confirm.'
@@ -263,6 +264,7 @@ $script:Text = @{
         'Verdict.Thermal'        = 'Causa mais provável: superaquecimento. O PC desligou ou hibernou por temperatura crítica.'
         'Verdict.BlueScreen'     = 'Houve telas azuis: verifique drivers, atualizações do Windows e a memória RAM.'
         'Verdict.PowerLoss'      = 'O PC perdeu energia sem tela azul: bateria, carregador, tomada ou botão liga/desliga segurado.'
+        'Verdict.Unexplained'    = 'O Windows não foi desligado corretamente {0} vez(es), mas os logs não dizem por quê (sem registro de perda de energia nem de tela azul). Observe se volta a acontecer e rode o diagnóstico de hardware do fabricante.'
         'Verdict.None'           = 'Nenhum desligamento inesperado, hibernação forçada ou travamento nos últimos {0} dias.'
         'Paste.Needed'           = 'Pasta térmica: HÁ sinais de superaquecimento. Limpe a ventoinha e as saídas de ar e troque a pasta térmica.'
         'Paste.Unconfirmed'      = 'Pasta térmica: nenhum sinal de superaquecimento nos logs, mas a temperatura não pôde ser medida aqui. Rode com -LoadTest 60 ou use o HWiNFO para confirmar.'
@@ -469,16 +471,19 @@ function Get-LoadTestSummary {
 function Get-Diagnosis {
     <#
         Turns the collected facts into the likely causes and a thermal-paste verdict.
-        Facts: UnexpectedShutdowns, PowerLossShutdowns, BlueScreens, ThermalEvents,
-        BatterySleeps, ThermalSleeps, BatteryHealth, MaxTemperature, LoadTestRan, Throttled.
+        Facts: UnexpectedShutdowns, PowerLossShutdowns, BugCheckShutdowns, BlueScreens,
+        ThermalEvents, BatterySleeps, ThermalSleeps, BatteryHealth, MaxTemperature,
+        LoadTestRan, Throttled.
     #>
     param([Parameter(Mandatory = $true)][hashtable]$Facts)
 
     $get = { param($Name, $Default) if ($Facts.ContainsKey($Name) -and $null -ne $Facts[$Name]) { $Facts[$Name] } else { $Default } }
     $thermalEvents = [int](& $get 'ThermalEvents' 0) + [int](& $get 'ThermalSleeps' 0)
     $batterySleeps = [int](& $get 'BatterySleeps' 0)
-    $blueScreens = [int](& $get 'BlueScreens' 0)
+    # A Kernel-Power 41 with a stop code is a blue screen even when no BugCheck 1001 was written.
+    $blueScreens = [int](& $get 'BlueScreens' 0) + [int](& $get 'BugCheckShutdowns' 0)
     $powerLoss = [int](& $get 'PowerLossShutdowns' 0)
+    $unexpected = [int](& $get 'UnexpectedShutdowns' 0)
     $health = & $get 'BatteryHealth' $null
     $maxTemp = & $get 'MaxTemperature' $null
     $throttled = [bool](& $get 'Throttled' $false)
@@ -491,6 +496,10 @@ function Get-Diagnosis {
     }
     if ($blueScreens -gt 0) { $causes.Add('BlueScreen') }
     if ($powerLoss -gt 0 -and $thermalEvents -eq 0) { $causes.Add('PowerLoss') }
+    # Unclean shutdowns the logs cannot explain (for example only EventLog 6008): never say "none".
+    if ($unexpected -gt 0 -and -not ($causes.Contains('Thermal') -or $causes.Contains('BlueScreen') -or $causes.Contains('PowerLoss'))) {
+        $causes.Add('Unexplained')
+    }
     if ($causes.Count -eq 0) { $causes.Add('None') }
 
     $paste = 'Preventive'
@@ -668,6 +677,9 @@ function Invoke-CpuLoadTest {
     }
     finally {
         foreach ($worker in $workers) {
+            # Stop first: after Ctrl+C the workers would otherwise keep the CPU at 100% until
+            # the deadline. Stop() does nothing on a pipeline that already finished.
+            try { $worker.Shell.Stop() } catch { Write-Verbose 'Load worker could not be stopped' }
             try { [void]$worker.Shell.EndInvoke($worker.Handle) } catch { Write-Verbose 'Load worker ended with an error' }
             $worker.Shell.Dispose()
         }
@@ -737,12 +749,13 @@ function Invoke-ShutdownCheck {
     $kernel41 = @(Get-EventSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 41; StartTime = $Since })
     $dirty = @(Get-EventSafe @{ LogName = 'System'; ProviderName = 'EventLog'; Id = 6008; StartTime = $Since })
     $powerLoss = 0
+    $bugCheck = 0
     $details = New-Object System.Collections.Generic.List[string]
     foreach ($event in ($kernel41 | Sort-Object TimeCreated -Descending)) {
         $data = Get-EventDataMap $event
         $code = 0L
         [void][long]::TryParse([string]$data['BugcheckCode'], [ref]$code)
-        if ($code -eq 0) { $powerLoss++ }
+        if ($code -eq 0) { $powerLoss++ } else { $bugCheck++ }
         if ($details.Count -lt 6) {
             if ($code -eq 0) { $details.Add((Get-Text 'Shut.PowerLoss' @((Format-Time $event.TimeCreated)))) }
             else { $details.Add((Get-Text 'Shut.BugCheck' @((Format-Time $event.TimeCreated), $code))) }
@@ -751,6 +764,7 @@ function Invoke-ShutdownCheck {
     $unexpected = [Math]::Max($kernel41.Count, $dirty.Count)
     $Facts.UnexpectedShutdowns = $unexpected
     $Facts.PowerLossShutdowns = $powerLoss
+    $Facts.BugCheckShutdowns = $bugCheck
     if ($unexpected -eq 0) { $findings.Add((New-Finding 'Shutdown' 'Ok' (Get-Text 'Shut.None'))) }
     else {
         $advice = @(); if ($powerLoss -gt 0) { $advice = @(Get-Text 'Shut.PowerLoss.Advice') }
@@ -950,6 +964,7 @@ function Write-Diagnosis {
             'Thermal' { Write-Finding (New-Finding 'Verdict' 'Critical' (Get-Text 'Verdict.Thermal') -Advice @(Get-Text 'Temp.Hot.Advice')) }
             'BlueScreen' { Write-Finding (New-Finding 'Verdict' 'Critical' (Get-Text 'Verdict.BlueScreen')) }
             'PowerLoss' { Write-Finding (New-Finding 'Verdict' 'Warn' (Get-Text 'Verdict.PowerLoss')) }
+            'Unexplained' { Write-Finding (New-Finding 'Verdict' 'Warn' (Get-Text 'Verdict.Unexplained' @($Facts.UnexpectedShutdowns))) }
             default { Write-Finding (New-Finding 'Verdict' 'Ok' (Get-Text 'Verdict.None' @($Days))) }
         }
     }
@@ -1041,7 +1056,11 @@ if ($MyInvocation.InvocationName -ne '.') {
             $script:ExitCode = 2
         }
         else {
-            Invoke-HealthCheck -Days $Days -LoadSeconds $LoadTest -ReportFolder $ReportPath -NoReport:$NoReport
+            # .NET resolves relative paths against the process directory, which Set-Location
+            # does not change in Windows PowerShell 5.1: resolve against the PowerShell location.
+            $reportFolder = $ReportPath
+            if ($reportFolder) { $reportFolder = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($reportFolder) }
+            Invoke-HealthCheck -Days $Days -LoadSeconds $LoadTest -ReportFolder $reportFolder -NoReport:$NoReport
         }
     }
     catch {
