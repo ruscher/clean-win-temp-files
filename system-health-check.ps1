@@ -558,9 +558,16 @@ function Invoke-QuietTool {
         battery, which must not leak into the report, and Windows PowerShell 5.1 turns a
         redirected native error stream into a terminating error under ErrorAction Stop.
         A tool that hangs (for example a faulty battery driver) is killed after the timeout and
-        reported with TimedOut and exit code -1, so the health check never blocks.
+        reported with TimedOut and exit code -1, so the health check never blocks. The same
+        result is returned when the tool exits but its output does not finish in time (a child
+        process still holding the pipes): that output may be incomplete.
     #>
-    param([Parameter(Mandatory = $true)][string]$FilePath, [string[]]$Arguments = @(), [int]$TimeoutSeconds = 60)
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [int]$TimeoutSeconds = 60,
+        [int]$StreamTimeoutSeconds = 5
+    )
 
     $quoted = foreach ($argument in $Arguments) {
         if ($argument -match '[\s"]') { '"' + $argument.Replace('"', '\"') + '"' } else { $argument }
@@ -583,10 +590,11 @@ function Invoke-QuietTool {
             # Never wait on the read tasks here: a child process may still hold the pipes open.
             return [pscustomobject]@{ ExitCode = -1; Output = ''; TimedOut = $true }
         }
-        $text = ''
-        if ($output.Wait(5000)) { $text = $output.Result }
-        [void]$errors.Wait(5000)
-        return [pscustomobject]@{ ExitCode = $process.ExitCode; Output = $text; TimedOut = $false }
+        $streamWait = $StreamTimeoutSeconds * 1000
+        if (-not ($output.Wait($streamWait) -and $errors.Wait($streamWait))) {
+            return [pscustomobject]@{ ExitCode = -1; Output = ''; TimedOut = $true }
+        }
+        return [pscustomobject]@{ ExitCode = $process.ExitCode; Output = $output.Result; TimedOut = $false }
     }
     finally { $process.Dispose() }
 }

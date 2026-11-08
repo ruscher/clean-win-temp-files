@@ -120,6 +120,25 @@ Describe 'powercfg parsing' {
         $result.ExitCode | Should -Be -1
         $timer.Elapsed.TotalSeconds | Should -BeLessThan 10 -Because 'the 30-second ping must be killed after 2 seconds'
     }
+
+    It 'reports a timeout when the tool exits but a child process keeps its output open' {
+        # cmd exits at once; the background ping inherits the pipes and keeps them open.
+        $marker = '127.0.0.3'
+        try {
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            $result = Invoke-QuietTool -FilePath $env:ComSpec -Arguments @('/d', '/c', "start /b ping -n 20 $marker") -TimeoutSeconds 10 -StreamTimeoutSeconds 1
+            $timer.Stop()
+            $result.TimedOut | Should -BeTrue -Because 'the output may be incomplete'
+            $result.ExitCode | Should -Be -1
+            $result.Output | Should -BeNullOrEmpty
+            $timer.Elapsed.TotalSeconds | Should -BeLessThan 8
+        }
+        finally {
+            Get-CimInstance Win32_Process -Filter "Name = 'PING.EXE'" -ErrorAction SilentlyContinue |
+                Where-Object { $_.CommandLine -like "*$marker*" } |
+                ForEach-Object { [void](Invoke-CimMethod -InputObject $_ -MethodName Terminate) }
+        }
+    }
 }
 
 Describe 'Load test summary' {
