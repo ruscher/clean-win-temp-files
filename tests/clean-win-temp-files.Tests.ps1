@@ -599,6 +599,54 @@ Describe 'Selection and catalog' {
         $selection.UserTemp | Should -BeFalse
     }
 
+    It 'pre-selects the disposable caches in Deep mode, never the Recycle Bin or DISM' {
+        $scans = @(
+            (New-TestScan 'UserTemp' 'Safe' 'Ready'),
+            (New-TestScan 'RecycleBin' 'Advanced' 'Ready' 5GB 'RecycleBin'),
+            (New-TestScan 'CrashDumps' 'Advanced' 'Ready'),
+            (New-TestScan 'BrowserCache' 'Advanced' 'Ready'),
+            (New-TestScan 'ServiceWorkerCache' 'Advanced' 'Ready'),
+            (New-TestScan 'AppCache' 'Advanced' 'Blocked'),
+            (New-TestScan 'ComponentStore' 'Advanced' 'Deferred' 0 'ComponentStore')
+        )
+        $deep = Get-DefaultSelection -Scans $scans -Include @() -Exclude @('ServiceWorkerCache') -Mode 'Deep'
+        $deep.UserTemp | Should -BeTrue
+        $deep.CrashDumps | Should -BeTrue
+        $deep.BrowserCache | Should -BeTrue
+        $deep.ServiceWorkerCache | Should -BeFalse -Because '-Exclude still wins'
+        $deep.AppCache | Should -BeFalse -Because 'a cache whose app is open cannot be selected'
+        $deep.RecycleBin | Should -BeFalse -Because 'the Recycle Bin is never emptied by default'
+        $deep.ComponentStore | Should -BeFalse -Because 'DISM is slow and always opt-in'
+
+        $safe = Get-DefaultSelection -Scans $scans -Include @() -Exclude @()
+        $safe.BrowserCache | Should -BeFalse -Because 'Safe mode keeps every cache opt-in'
+        $script:DeepCategoryIds | Should -Not -Contain 'RecycleBin'
+        $script:DeepCategoryIds | Should -Not -Contain 'ComponentStore'
+    }
+
+    It 'rescans after an app is closed and keeps the user''s choices' {
+        $fixture = Join-Path $TestDrive 'rescan'
+        New-TextFile (Join-Path $fixture 'cache.bin') | Out-Null
+        function Get-GuardedTestTarget { param($Context) New-CleanupTarget -Path $fixture -MinAgeHours 0 -Guard @('cwtf-fake-app') -GuardName 'Fake App' }
+        function Get-PlainTestTarget { param($Context) New-CleanupTarget -Path $fixture -MinAgeHours 0 }
+        $guarded = [pscustomobject]@{ Id = 'AppCache'; Group = 'Advanced'; Kind = 'Files'; Builder = 'Get-GuardedTestTarget'; RequiresAdmin = $false }
+        $plain = [pscustomobject]@{ Id = 'UserTemp'; Group = 'Safe'; Kind = 'Files'; Builder = 'Get-PlainTestTarget'; RequiresAdmin = $false }
+
+        $context = New-FakeContext -Policy $script:FakePolicy -ReferenceTimeUtc ([datetime]::UtcNow.AddMinutes(1))
+        [void]$context.RunningProcesses.Add('cwtf-fake-app')
+        $scans = Invoke-ScanBatch -Categories @($plain, $guarded) -Context $context
+        ($scans | Where-Object { $_.Category.Id -eq 'AppCache' }).State | Should -Be 'Blocked'
+
+        $selection = Get-DefaultSelection -Scans $scans -Include @() -Exclude @() -Mode 'Deep'
+        $selection.UserTemp = $false   # the user unselected it
+        $fresh = Update-ScanBatch -Scans $scans -Selection ([ref]$selection) -Context $context -Mode 'Deep'
+
+        ($fresh | Where-Object { $_.Category.Id -eq 'AppCache' }).State | Should -Be 'Ready' -Because 'the fake app is not running'
+        $selection.AppCache | Should -BeTrue -Because 'it just became selectable and Deep pre-selects it'
+        $selection.UserTemp | Should -BeFalse -Because 'the user''s choice is kept'
+        Test-Path -LiteralPath (Join-Path $fixture 'cache.bin') | Should -BeTrue -Because 'scanning never deletes'
+    }
+
     It 'never offers Prefetch, WinSxS, Windows Update or personal folders' {
         $context = New-FakeContext -Policy $script:FakePolicy
         $paths = foreach ($category in (Get-CategoryCatalog | Where-Object { $_.Builder })) {
@@ -641,6 +689,116 @@ Describe 'Selection and catalog' {
         $set.Contains('C:\Windows\Temp\new.dll') | Should -BeTrue
         $set.Contains('c:\windows\system32\old.dll') | Should -BeTrue
         $set.Count | Should -Be 3
+    }
+}
+
+Describe 'Browser, offline-site and app caches' {
+    BeforeAll {
+        $script:Local = Join-Path $TestDrive 'Local'
+        $chrome = Join-Path $Local 'Google\Chrome\User Data'
+        foreach ($profileName in @('Default', 'Profile 1')) {
+            New-TextFile (Join-Path $chrome "$profileName\Preferences") | Out-Null
+            foreach ($keep in @('Cookies', 'Login Data', 'History', 'Bookmarks')) { New-TextFile (Join-Path $chrome "$profileName\$keep") | Out-Null }
+            foreach ($dir in @('Cache\Cache_Data', 'Code Cache\js', 'GPUCache', 'DawnWebGPUCache', 'Service Worker\CacheStorage\origin',
+                    'Service Worker\Database', 'Service Worker\ScriptCache', 'Local Storage\leveldb', 'IndexedDB\site', 'File System\000')) {
+                New-TextFile (Join-Path $chrome "$profileName\$dir\f.bin") | Out-Null
+            }
+        }
+        foreach ($dir in @('GrShaderCache', 'component_crx_cache', 'Safe Browsing')) { New-TextFile (Join-Path $chrome "$dir\f.bin") | Out-Null }
+        New-TextFile (Join-Path $chrome 'Crashpad\reports\r.dmp') | Out-Null   # no Preferences: not a profile
+
+        $teams = Join-Path $Local 'Packages\MSTeams_8wekyb3d8bbwe\LocalCache\Microsoft\MSTeams\EBWebView'
+        New-TextFile (Join-Path $teams 'WV2Profile_tfw\Preferences') | Out-Null
+        foreach ($dir in @('WV2Profile_tfw\Cache\Cache_Data', 'WV2Profile_tfw\Service Worker\CacheStorage\origin', 'WV2Profile_tfw\IndexedDB\site',
+                'WV2Profile_tfw\Local Storage\leveldb', 'GrShaderCache')) {
+            New-TextFile (Join-Path $teams "$dir\f.bin") | Out-Null
+        }
+        $whatsapp = Join-Path $Local 'Packages\5319275A.WhatsAppDesktop_cv1g1gvanyjgm\LocalCache\EBWebView'
+        New-TextFile (Join-Path $whatsapp 'Default\Preferences') | Out-Null
+        New-TextFile (Join-Path $whatsapp 'Default\Code Cache\js\f.bin') | Out-Null
+
+        $firefox = Join-Path $Local 'Mozilla\Firefox\Profiles\abc.default-release'
+        foreach ($dir in @('cache2\entries', 'startupCache', 'thumbnails', 'storage\default')) { New-TextFile (Join-Path $firefox "$dir\f.bin") | Out-Null }
+
+        function Get-RelativeTargetPath {
+            param($Targets)
+            foreach ($target in $Targets) { $target.Path.Substring($script:Local.Length + 1) }
+        }
+        function New-CacheContext {
+            $context = New-FakeContext -Policy $script:FakePolicy -ReferenceTimeUtc ([datetime]::UtcNow.AddMinutes(1))
+            $context.LocalAppData = $script:Local
+            return $context
+        }
+    }
+
+    It 'adds the disposable Chromium and Firefox caches, never profile data' {
+        $targets = @(Get-BrowserCacheTarget (New-CacheContext))
+        $relative = @(Get-RelativeTargetPath $targets)
+        $relative | Should -Contain 'Google\Chrome\User Data\Default\Cache'
+        $relative | Should -Contain 'Google\Chrome\User Data\Profile 1\Code Cache'
+        $relative | Should -Contain 'Google\Chrome\User Data\Default\DawnWebGPUCache'
+        $relative | Should -Contain 'Google\Chrome\User Data\GrShaderCache'
+        $relative | Should -Contain 'Google\Chrome\User Data\component_crx_cache'
+        $relative | Should -Contain 'Mozilla\Firefox\Profiles\abc.default-release\cache2'
+        $relative | Should -Contain 'Mozilla\Firefox\Profiles\abc.default-release\startupCache'
+        foreach ($path in $relative) {
+            $path | Should -Not -Match 'Cookies|Login Data|History|Bookmarks|Local Storage|IndexedDB|File System|Service Worker|Safe Browsing|Crashpad|storage'
+        }
+        foreach ($target in @($targets | Where-Object { $_.Path -like '*Chrome*' })) { $target.Guard | Should -Contain 'chrome' }
+    }
+
+    It 'offers the Service Worker Cache Storage separately and keeps the registrations' {
+        $relative = @(Get-RelativeTargetPath @(Get-ServiceWorkerCacheTarget (New-CacheContext)))
+        $relative | Should -HaveCount 2
+        $relative | Should -Contain 'Google\Chrome\User Data\Default\Service Worker\CacheStorage'
+        $relative | Should -Contain 'Google\Chrome\User Data\Profile 1\Service Worker\CacheStorage'
+    }
+
+    It 'finds the WebView2 caches of desktop apps, guarded by the app process' {
+        $targets = @(Get-AppCacheTarget (New-CacheContext))
+        $relative = @(Get-RelativeTargetPath $targets)
+        $teamsRoot = 'Packages\MSTeams_8wekyb3d8bbwe\LocalCache\Microsoft\MSTeams\EBWebView'
+        $relative | Should -Contain "$teamsRoot\WV2Profile_tfw\Cache"
+        $relative | Should -Contain "$teamsRoot\WV2Profile_tfw\Service Worker\CacheStorage"
+        $relative | Should -Contain "$teamsRoot\GrShaderCache"
+        $relative | Should -Contain 'Packages\5319275A.WhatsAppDesktop_cv1g1gvanyjgm\LocalCache\EBWebView\Default\Code Cache'
+        foreach ($path in $relative) { $path | Should -Not -Match 'IndexedDB|Local Storage|Preferences' }
+        ($targets | Where-Object { $_.Path -like '*MSTeams*' } | Select-Object -First 1).Guard | Should -Contain 'ms-teams'
+        ($targets | Where-Object { $_.Path -like '*WhatsApp*' } | Select-Object -First 1).Guard | Should -Contain 'WhatsApp'
+    }
+
+    It 'skips the cache of an app that is running and scans the others' {
+        $context = New-CacheContext
+        [void]$context.RunningProcesses.Add('ms-teams')
+        $category = Get-CategoryCatalog | Where-Object { $_.Id -eq 'AppCache' }
+        $scan = Invoke-CategoryScan -Category $category -Context $context
+        $scan.BlockedBy | Should -Contain 'Microsoft Teams'
+        @($scan.Trees | Where-Object { $_.Tree.RootPath -like '*MSTeams*' }).Count | Should -Be 0
+        @($scan.Trees | Where-Object { $_.Tree.RootPath -like '*WhatsApp*' }).Count | Should -BeGreaterThan 0
+        $scan.State | Should -Be 'Ready'
+    }
+
+    It 'cleans the cache files and keeps the profile data' {
+        # A separate local folder with only a Brave profile: the cleaner re-checks the real
+        # process list, and Brave is not expected to run on the test machine.
+        $local = Join-Path $TestDrive 'LocalClean'
+        $brave = Join-Path $local 'BraveSoftware\Brave-Browser\User Data\Default'
+        $keepFiles = @('Preferences', 'Cookies', 'Login Data', 'History', 'Bookmarks', 'Local Storage\leveldb\f.bin', 'IndexedDB\site\f.bin', 'Service Worker\Database\f.bin', 'Service Worker\CacheStorage\origin\f.bin')
+        foreach ($file in $keepFiles + @('Cache\Cache_Data\f.bin', 'Code Cache\js\f.bin')) { New-TextFile (Join-Path $brave $file) | Out-Null }
+
+        $context = New-FakeContext -Policy $script:FakePolicy -ReferenceTimeUtc ([datetime]::UtcNow.AddMinutes(1))
+        $context.LocalAppData = $local
+        $category = Get-CategoryCatalog | Where-Object { $_.Id -eq 'BrowserCache' }
+        $scan = Invoke-CategoryScan -Category $category -Context $context
+        $result = Invoke-CategoryClean -Scan $scan -Context $context
+
+        $result.RemovedFiles | Should -Be 2
+        Test-Path -LiteralPath (Join-Path $brave 'Cache\Cache_Data\f.bin') | Should -BeFalse
+        Test-Path -LiteralPath (Join-Path $brave 'Code Cache\js\f.bin') | Should -BeFalse
+        Test-Path -LiteralPath (Join-Path $brave 'Cache') | Should -BeTrue -Because 'the cache folder itself is kept'
+        foreach ($keep in $keepFiles) {
+            Test-Path -LiteralPath (Join-Path $brave $keep) | Should -BeTrue -Because "$keep is not part of the browser cache category"
+        }
     }
 }
 
