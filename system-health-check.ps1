@@ -600,6 +600,7 @@ function ConvertTo-StartupTaskName {
         'GamingApp'               = 'Xbox'
         'MicrosoftOfficeHub'      = 'Microsoft 365 (Office)'
         'WindowsTerminal'         = 'Windows Terminal'
+        '6365217CE6EB4'           = 'Microsoft Defender'
     }
     $name = ($PackageFamily -split '_')[0]
     foreach ($key in $known.Keys) { if ($name -like "*$key*") { return $known[$key] } }

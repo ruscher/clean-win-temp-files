@@ -254,6 +254,7 @@ Describe 'Maintenance helpers' {
         @{ Package = 'MSTeams_8wekyb3d8bbwe'; Expected = 'Microsoft Teams' },
         @{ Package = 'Microsoft.YourPhone_8wekyb3d8bbwe'; Expected = 'Phone Link' },
         @{ Package = '7EE7776C.LinkedInforWindows_w1wdnht996qgy'; Expected = 'LinkedInforWindows' },
+        @{ Package = 'Microsoft.6365217CE6EB4_8wekyb3d8bbwe'; Expected = 'Microsoft Defender' },
         @{ Package = 'Contoso.Notes_abc123'; Expected = 'Contoso.Notes' }
     ) {
         ConvertTo-StartupTaskName $Package | Should -Be $Expected
