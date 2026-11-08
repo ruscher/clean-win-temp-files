@@ -542,11 +542,42 @@ function Get-CimSafe {
     catch { return @() }
 }
 
+function Invoke-QuietTool {
+    <#
+        Runs a Windows tool and returns its exit code and standard output. The error output is
+        captured and discarded: powercfg prints "Unable to perform operation" on PCs without a
+        battery, which must not leak into the report, and Windows PowerShell 5.1 turns a
+        redirected native error stream into a terminating error under ErrorAction Stop.
+    #>
+    param([Parameter(Mandatory = $true)][string]$FilePath, [string[]]$Arguments = @())
+
+    $quoted = foreach ($argument in $Arguments) {
+        if ($argument -match '[\s"]') { '"' + $argument.Replace('"', '\"') + '"' } else { $argument }
+    }
+    $info = New-Object Diagnostics.ProcessStartInfo
+    $info.FileName = $FilePath
+    $info.Arguments = @($quoted) -join ' '
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+
+    $process = [Diagnostics.Process]::Start($info)
+    try {
+        $errors = $process.StandardError.ReadToEndAsync()   # read both streams: no pipe deadlock
+        $output = $process.StandardOutput.ReadToEnd()
+        $process.WaitForExit()
+        [void]$errors.Result
+        return [pscustomobject]@{ ExitCode = $process.ExitCode; Output = $output }
+    }
+    finally { $process.Dispose() }
+}
+
 function Get-BatteryReport {
     $file = Join-Path ([IO.Path]::GetTempPath()) ('cwtf-battery-{0}.xml' -f [guid]::NewGuid().ToString('N'))
     try {
         $powercfg = Join-Path $env:SystemRoot 'System32\powercfg.exe'
-        & $powercfg /batteryreport /xml /output $file /duration 1 | Out-Null
+        [void](Invoke-QuietTool -FilePath $powercfg -Arguments @('/batteryreport', '/xml', '/output', $file, '/duration', '1'))
         if (-not [IO.File]::Exists($file)) { return @() }
         return ConvertFrom-BatteryReportXml -Xml ([xml][IO.File]::ReadAllText($file))
     }
@@ -559,10 +590,13 @@ function Get-BatteryReport {
 function Get-CriticalBatteryPolicy {
     $powercfg = Join-Path $env:SystemRoot 'System32\powercfg.exe'
     try {
-        $action = ConvertFrom-PowerCfgSetting -Lines @(& $powercfg /q SCHEME_CURRENT SUB_BATTERY BATACTIONCRIT 2>$null)
-        $level = ConvertFrom-PowerCfgSetting -Lines @(& $powercfg /q SCHEME_CURRENT SUB_BATTERY BATLEVELCRIT 2>$null)
-        if (-not $action -or -not $level) { return $null }
-        return [pscustomobject]@{ ActionDc = $action.Dc; LevelDc = $level.Dc }
+        $action = Invoke-QuietTool -FilePath $powercfg -Arguments @('/q', 'SCHEME_CURRENT', 'SUB_BATTERY', 'BATACTIONCRIT')
+        $level = Invoke-QuietTool -FilePath $powercfg -Arguments @('/q', 'SCHEME_CURRENT', 'SUB_BATTERY', 'BATLEVELCRIT')
+        if ($action.ExitCode -ne 0 -or $level.ExitCode -ne 0) { return $null }
+        $actionValue = ConvertFrom-PowerCfgSetting -Lines @($action.Output -split "`r?`n")
+        $levelValue = ConvertFrom-PowerCfgSetting -Lines @($level.Output -split "`r?`n")
+        if (-not $actionValue -or -not $levelValue) { return $null }
+        return [pscustomobject]@{ ActionDc = $actionValue.Dc; LevelDc = $levelValue.Dc }
     }
     catch { return $null }
 }

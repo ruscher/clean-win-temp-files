@@ -101,6 +101,14 @@ Describe 'powercfg parsing' {
     It 'returns nothing when the setting does not exist' {
         ConvertFrom-PowerCfgSetting -Lines @('Invalid parameters -- try "/?" for help') | Should -BeNullOrEmpty
     }
+
+    It 'keeps the error output of Windows tools out of the report (PCs without a battery)' {
+        # powercfg prints "Unable to perform operation" on stderr when there is no battery.
+        $result = Invoke-QuietTool -FilePath $env:ComSpec -Arguments @('/d', '/c', 'echo visible & echo hidden 1>&2 & exit /b 3')
+        $result.ExitCode | Should -Be 3
+        $result.Output | Should -Match 'visible'
+        $result.Output | Should -Not -Match 'hidden'
+    }
 }
 
 Describe 'Load test summary' {
