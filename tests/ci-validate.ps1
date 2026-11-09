@@ -227,6 +227,44 @@ Assert-That 'Launcher exits 0' ($batCode -eq 0) "(exit $batCode)"
 Assert-That 'Launcher shows the Portuguese UI' ($batOutput -match 'LIMPEZA SEGURA')
 #endregion
 
+#region Deep mode
+Write-Section 'Deep mode (dry run)'
+$run = Invoke-Tool @('-Yes', '-DryRun', '-Mode', 'Deep')
+Assert-That 'Deep dry run exits 0' ($run.ExitCode -eq 0) "(exit $($run.ExitCode))"
+Assert-That 'Deep mode scanned the new cache categories' ($run.Json -and (Get-Category $run 'ServiceWorkerCache') -and (Get-Category $run 'AppCache'))
+$recycle = Get-Category $run 'RecycleBin'
+Assert-That 'Deep mode never selects the Recycle Bin' ($recycle -and $recycle.cleanState -eq 'NotSelected') "(state=$(if ($recycle) { $recycle.cleanState }))"
+Assert-That 'Deep mode is recorded in the JSON log' ($run.Json -and $run.Json.mode -eq 'Deep')
+#endregion
+
+#region Health check
+Write-Section 'System health check (read-only)'
+$healthTool = Join-Path $root 'system-health-check.ps1'
+$healthReports = Join-Path $ResultsPath 'health'
+$healthLauncher = Join-Path $root 'system-health-check.bat'
+# Windows PowerShell 5.1 turns redirected native stderr into a terminating error under
+# ErrorAction Stop. Capture it as text instead, so a stray error line fails the assertion
+# below rather than aborting the remaining checks and the fixture cleanup.
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $healthOutput = '' | & $hostExe -NoProfile -ExecutionPolicy Bypass -File $healthTool -NoColor -Language en -Days 7 -LoadTest 6 -ReportPath $healthReports 2>&1 | Out-String
+    $healthCode = $LASTEXITCODE
+    $healthBat = cmd.exe /d /c "`"$healthLauncher`" -NoReport -Language pt -Days 3 < NUL" 2>&1 | Out-String
+    $healthBatCode = $LASTEXITCODE
+}
+finally { $ErrorActionPreference = $previousPreference }
+Write-Host ($healthOutput.TrimEnd())
+Assert-That 'Health check exits 0 or 3 (3 = problems found)' (@(0, 3) -contains $healthCode) "(exit $healthCode)"
+Assert-That 'Health check shows every section' (($healthOutput -match 'SHUTDOWNS') -and ($healthOutput -match 'BATTERY AND POWER') -and ($healthOutput -match 'TEMPERATURE') -and ($healthOutput -match 'DIAGNOSIS'))
+Assert-That 'Health check had no unexpected errors' ($healthOutput -notmatch 'Unexpected error')
+Assert-That 'Health check ran the load test' ($healthOutput -match 'Load test')
+Assert-That 'Health check wrote the JSON report' ($null -ne (Get-ChildItem -LiteralPath $healthReports -Filter 'health-*.json' -ErrorAction SilentlyContinue | Select-Object -First 1))
+Write-Host ($healthBat.TrimEnd())
+Assert-That 'Health check launcher exits 0 or 3' (@(0, 3) -contains $healthBatCode) "(exit $healthBatCode)"
+Assert-That 'Health check launcher shows the Portuguese UI' ($healthBat -match 'BATERIA E ENERGIA')
+#endregion
+
 #region DISM
 if (-not $SkipDism) {
     Write-Section 'Component store analysis through DISM (dry run)'

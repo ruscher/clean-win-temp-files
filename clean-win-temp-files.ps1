@@ -10,8 +10,9 @@
 
     Safe cleanup (pre-selected):
         UserTemp, WindowsTemp, StoreAppTemp, DeliveryOptimization
-    Advanced cleanup (never pre-selected):
-        RecycleBin, CrashDumps, BrowserCache, ShaderCache, ComponentStore
+    Advanced cleanup (never pre-selected, except the caches in -Mode Deep):
+        RecycleBin, CrashDumps, BrowserCache, ServiceWorkerCache, AppCache, ShaderCache,
+        ComponentStore
 
     Never touched: Prefetch, WinSxS (only through DISM), SoftwareDistribution, the Windows
     Installer cache, personal folders, browser profiles (cookies, passwords, history),
@@ -20,6 +21,9 @@
 .PARAMETER Mode
     Safe (default) scans the recommended items. Advanced also scans the optional items
     up front (they are still not selected unless you select them or use -Include).
+    Deep scans everything and also pre-selects the disposable caches: CrashDumps (30+ days),
+    BrowserCache, ServiceWorkerCache, AppCache and ShaderCache. It never pre-selects the
+    Recycle Bin or the DISM component cleanup.
 
 .PARAMETER DryRun
     Scan and report what would be removed without deleting anything.
@@ -70,12 +74,17 @@
 .EXAMPLE
     .\clean-win-temp-files.ps1 -Yes -Include CrashDumps
     Unattended safe cleanup plus crash dumps older than 30 days.
+
+.EXAMPLE
+    .\clean-win-temp-files.ps1 -Mode Deep
+    Interactive cleanup with browser, offline-site and app caches pre-selected. Close the
+    browsers and apps first (or press R after closing them) so their caches are included.
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification = 'Interactive, colored terminal UI.')]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Internal helpers; -DryRun is the simulation switch.')]
 [CmdletBinding()]
 param(
-    [ValidateSet('Safe', 'Advanced')]
+    [ValidateSet('Safe', 'Advanced', 'Deep')]
     [string]$Mode = 'Safe',
 
     [switch]$DryRun,
@@ -118,22 +127,36 @@ $ErrorActionPreference = 'Stop'
 #region Constants
 
 $script:AppName = 'Clean Windows Temp Files'
-$script:AppVersion = '2.0.0'
+$script:AppVersion = '2.1.0'
 $script:ScriptPath = $PSCommandPath
 $script:ExitCode = 0
 
 $script:SafeCategoryIds = @('UserTemp', 'WindowsTemp', 'StoreAppTemp', 'DeliveryOptimization')
-$script:AdvancedCategoryIds = @('RecycleBin', 'CrashDumps', 'BrowserCache', 'ShaderCache', 'ComponentStore')
+$script:AdvancedCategoryIds = @('RecycleBin', 'CrashDumps', 'BrowserCache', 'ServiceWorkerCache', 'AppCache', 'ShaderCache', 'ComponentStore')
+# -Mode Deep also pre-selects these disposable caches. Never the Recycle Bin or DISM.
+$script:DeepCategoryIds = @('CrashDumps', 'BrowserCache', 'ServiceWorkerCache', 'AppCache', 'ShaderCache')
 
 # Minimum age (hours since the newest of creation / last write) before a file is a candidate.
 $script:MinAgeHours = @{
-    UserTemp     = 24     # apps and installers may still need files from the current session
-    WindowsTemp  = 72     # services and installers awaiting a restart use this folder
-    StoreAppTemp = 24
-    CrashDumps   = 720    # 30 days: recent dumps are evidence for diagnosing crashes
-    BrowserCache = 0      # only cleaned while the browser is closed
-    ShaderCache  = 1
+    UserTemp           = 24     # apps and installers may still need files from the current session
+    WindowsTemp        = 72     # services and installers awaiting a restart use this folder
+    StoreAppTemp       = 24
+    CrashDumps         = 720    # 30 days: recent dumps are evidence for diagnosing crashes
+    BrowserCache       = 0      # only cleaned while the browser is closed
+    ServiceWorkerCache = 0      # only cleaned while the browser is closed
+    AppCache           = 0      # only cleaned while the app is closed
+    ShaderCache        = 1
 }
+
+# Disposable Chromium/WebView2 caches. Per profile: HTTP cache, compiled JavaScript and the
+# GPU/WebGPU shader caches. Per "User Data" folder: the Skia/Dawn shader caches and the
+# component/extension download caches, which are downloaded again on demand.
+# Never cookies, logins, history, bookmarks, Local Storage, IndexedDB, File System or the
+# Service Worker registrations.
+$script:ChromiumProfileCaches = @('Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'Media Cache')
+$script:ChromiumRootCaches = @('GrShaderCache', 'GraphiteDawnCache', 'ShaderCache', 'component_crx_cache', 'extensions_crx_cache')
+# Firefox keeps its disposable caches in the local (not roaming) profile folder.
+$script:FirefoxCaches = @('cache2', 'startupCache', 'thumbnails', 'jumpListCache')
 
 $script:DeliveryOptimizationMinBytes = 100MB
 $script:LogRetentionCount = 30
@@ -162,6 +185,7 @@ $script:Text = @{
         'Header.RebootPending'    = 'A Windows restart is pending. Restarting before cleaning is recommended.'
         'Header.Server'           = 'Windows Server detected: only Windows 10 and 11 are officially supported.'
         'Header.OtherUser'        = 'Cleaning the files of the account that started the tool.'
+        'Header.Deep'             = 'DEEP mode: browser, offline-site and app caches are pre-selected. Close browsers and apps to include their caches.'
         'Error.NotWindows'        = 'This tool runs on Windows 10 and Windows 11 only.'
         'Error.Unsupported'       = 'Unsupported Windows version (build {0}). Windows 10 or Windows 11 is required.'
         'Error.Language'          = 'PowerShell is running in {0} mode. This tool needs FullLanguage mode.'
@@ -191,7 +215,7 @@ $script:Text = @{
         'State.Small'             = 'small — Windows already manages it'
         'State.OtherUser'         = 'only available to the signed-in account'
         'Note.PartialAdmin'       = 'some locations need administrator'
-        'Note.Blocked'            = '{0} open — its cache will be skipped'
+        'Note.Blocked'            = 'Open: {0} — its cache will be skipped'
         'Note.Aborted'            = 'A folder resolved to a protected location ({0}). Nothing in this category will be touched.'
         'Total.Selected'          = 'Selected'
         'Total.Advanced'          = 'Available in advanced options'
@@ -200,6 +224,7 @@ $script:Text = @{
         'Menu.Simulate'           = 'Simulate'
         'Menu.Toggle'             = 'Select/unselect'
         'Menu.Advanced'           = 'Advanced options'
+        'Menu.Rescan'             = 'Rescan (after closing apps)'
         'Menu.Quit'               = 'Quit'
         'Menu.Prompt'             = 'Choice'
         'Menu.Invalid'            = 'Not recognized: {0}'
@@ -262,6 +287,10 @@ $script:Text = @{
         'Cat.CrashDumps.Note'           = 'Only older than 30 days; recent ones are kept for diagnosis'
         'Cat.BrowserCache.Name'         = 'Browser caches'
         'Cat.BrowserCache.Note'         = 'Cache only: logins, cookies, history and bookmarks are kept. Sites load slower at first'
+        'Cat.ServiceWorkerCache.Name'   = 'Offline site cache'
+        'Cat.ServiceWorkerCache.Note'   = 'Service Worker Cache Storage: offline copies saved by sites and web apps. Logins and cookies are kept; some sites may not work (offline, or even online) until they rebuild their copy'
+        'Cat.AppCache.Name'             = 'App caches (Teams, WhatsApp...)'
+        'Cat.AppCache.Note'             = 'Web caches of the new Teams, WhatsApp and the new Outlook, including their offline (Service Worker) copies. Sign-in, settings and messages are kept. The app opens slower once'
         'Cat.ShaderCache.Name'          = 'DirectX and GPU shader caches'
         'Cat.ShaderCache.Note'          = 'Games may stutter for a while as shaders are rebuilt'
         'Cat.ComponentStore.Name'       = 'Windows component cleanup (DISM)'
@@ -274,6 +303,7 @@ $script:Text = @{
         'Header.RebootPending'    = 'Há uma reinicialização pendente. Recomenda-se reiniciar o Windows antes de limpar.'
         'Header.Server'           = 'Windows Server detectado: apenas Windows 10 e 11 são oficialmente suportados.'
         'Header.OtherUser'        = 'Limpando os arquivos da conta que abriu a ferramenta.'
+        'Header.Deep'             = 'Modo PROFUNDO: caches de navegadores, de sites offline e de apps vêm marcados. Feche navegadores e apps para incluí-los.'
         'Error.NotWindows'        = 'Esta ferramenta funciona apenas no Windows 10 e no Windows 11.'
         'Error.Unsupported'       = 'Versão do Windows não suportada (build {0}). É necessário Windows 10 ou Windows 11.'
         'Error.Language'          = 'O PowerShell está no modo {0}. Esta ferramenta precisa do modo FullLanguage.'
@@ -303,7 +333,7 @@ $script:Text = @{
         'State.Small'             = 'pequeno — o Windows já gerencia'
         'State.OtherUser'         = 'disponível só para a conta conectada'
         'Note.PartialAdmin'       = 'alguns locais requerem administrador'
-        'Note.Blocked'            = '{0} aberto — o cache dele será ignorado'
+        'Note.Blocked'            = 'Aberto: {0} — o cache será ignorado'
         'Note.Aborted'            = 'Uma pasta apontou para um local protegido ({0}). Nada nesta categoria será tocado.'
         'Total.Selected'          = 'Selecionado'
         'Total.Advanced'          = 'Disponível nas opções avançadas'
@@ -312,6 +342,7 @@ $script:Text = @{
         'Menu.Simulate'           = 'Simular'
         'Menu.Toggle'             = 'Marcar/desmarcar'
         'Menu.Advanced'           = 'Opções avançadas'
+        'Menu.Rescan'             = 'Analisar de novo (após fechar apps)'
         'Menu.Quit'               = 'Sair'
         'Menu.Prompt'             = 'Opção'
         'Menu.Invalid'            = 'Não reconhecido: {0}'
@@ -374,6 +405,10 @@ $script:Text = @{
         'Cat.CrashDumps.Note'           = 'Só com mais de 30 dias; os recentes ficam para diagnóstico'
         'Cat.BrowserCache.Name'         = 'Cache dos navegadores'
         'Cat.BrowserCache.Note'         = 'Só o cache: logins, cookies, histórico e favoritos são mantidos. Sites carregam mais devagar no início'
+        'Cat.ServiceWorkerCache.Name'   = 'Cache offline de sites'
+        'Cat.ServiceWorkerCache.Note'   = 'Cache Storage do Service Worker: cópias offline guardadas por sites e apps web. Logins e cookies são mantidos; alguns sites podem não funcionar (offline ou até online) até recriar a cópia'
+        'Cat.AppCache.Name'             = 'Cache de apps (Teams, WhatsApp...)'
+        'Cat.AppCache.Note'             = 'Cache web do novo Teams, do WhatsApp e do novo Outlook, incluindo as cópias offline (Service Worker). Login, configurações e mensagens são mantidos. O app abre mais devagar uma vez'
         'Cat.ShaderCache.Name'          = 'Cache de shaders DirectX e GPU'
         'Cat.ShaderCache.Note'          = 'Jogos podem engasgar por um tempo enquanto os shaders são recompilados'
         'Cat.ComponentStore.Name'       = 'Limpeza de componentes (DISM)'
@@ -1146,34 +1181,83 @@ function Get-CrashDumpTarget {
     New-CleanupTarget -Path (Join-PathSafe $local 'Microsoft\Windows\WER\ReportQueue') -MinAgeHours $hours
 }
 
-function Get-BrowserCacheTarget {
-    # Only the HTTP cache, the compiled-code cache and the GPU cache. Never cookies, logins,
-    # history, bookmarks, Local Storage, IndexedDB or Service Worker storage.
-    param($Context)
-    $hours = $script:MinAgeHours.BrowserCache
-    $local = $Context.LocalAppData
-
-    $chromium = @(
+function Get-ChromiumBrowserList {
+    return @(
         @{ Name = 'Google Chrome'; Path = 'Google\Chrome\User Data'; Process = @('chrome') },
         @{ Name = 'Microsoft Edge'; Path = 'Microsoft\Edge\User Data'; Process = @('msedge') },
         @{ Name = 'Brave'; Path = 'BraveSoftware\Brave-Browser\User Data'; Process = @('brave') },
         @{ Name = 'Vivaldi'; Path = 'Vivaldi\User Data'; Process = @('vivaldi') },
         @{ Name = 'Chromium'; Path = 'Chromium\User Data'; Process = @('chrome') }
     )
-    foreach ($browser in $chromium) {
-        foreach ($profileDir in (Get-ChildDirectory (Join-PathSafe $local $browser.Path))) {
-            if (-not [IO.File]::Exists((Join-PathSafe $profileDir 'Preferences'))) { continue }
-            foreach ($cache in @('Cache', 'Code Cache', 'GPUCache')) {
-                $path = Join-PathSafe $profileDir $cache
-                if ([IO.Directory]::Exists($path)) {
-                    New-CleanupTarget -Path $path -MinAgeHours $hours -RemoveEmptyDirs $false -Guard $browser.Process -GuardName $browser.Name
-                }
+}
+
+function Get-ChromiumProfileDirectory {
+    # Profiles are the child folders that hold a Preferences file (Default, Profile 1, Guest Profile...).
+    param([string]$UserDataPath)
+    foreach ($directory in (Get-ChildDirectory $UserDataPath)) {
+        if ([IO.File]::Exists((Join-PathSafe $directory 'Preferences'))) { $directory }
+    }
+}
+
+function Get-ChromiumCacheTarget {
+    <#
+        Cache targets inside one Chromium or WebView2 "User Data" folder. By default the
+        disposable caches of every profile plus the shared shader/download caches. With
+        -ServiceWorker, only each profile's Service Worker Cache Storage. Every target is
+        guarded by the owning process: a running browser or app is never touched.
+    #>
+    param(
+        [string]$UserDataPath,
+        [string[]]$Guard,
+        [string]$GuardName,
+        [double]$MinAgeHours,
+        [switch]$ServiceWorker
+    )
+
+    if (-not $UserDataPath -or -not [IO.Directory]::Exists($UserDataPath)) { return }
+    $profiles = @(Get-ChromiumProfileDirectory $UserDataPath)
+    if ($profiles.Count -eq 0) { return }   # not a Chromium "User Data" folder
+
+    if ($ServiceWorker) {
+        foreach ($profileDir in $profiles) {
+            $path = Join-PathSafe (Join-PathSafe $profileDir 'Service Worker') 'CacheStorage'
+            if ([IO.Directory]::Exists($path)) {
+                New-CleanupTarget -Path $path -MinAgeHours $MinAgeHours -Guard $Guard -GuardName $GuardName
+            }
+        }
+        return
+    }
+
+    foreach ($profileDir in $profiles) {
+        foreach ($cache in $script:ChromiumProfileCaches) {
+            $path = Join-PathSafe $profileDir $cache
+            if ([IO.Directory]::Exists($path)) {
+                New-CleanupTarget -Path $path -MinAgeHours $MinAgeHours -RemoveEmptyDirs $false -Guard $Guard -GuardName $GuardName
             }
         }
     }
+    foreach ($cache in $script:ChromiumRootCaches) {
+        $path = Join-PathSafe $UserDataPath $cache
+        if ([IO.Directory]::Exists($path)) {
+            New-CleanupTarget -Path $path -MinAgeHours $MinAgeHours -RemoveEmptyDirs $false -Guard $Guard -GuardName $GuardName
+        }
+    }
+}
 
+function Get-BrowserCacheTarget {
+    # HTTP, compiled-code and GPU/shader caches only. Never cookies, logins, history,
+    # bookmarks, Local Storage, IndexedDB or Service Worker storage (see ServiceWorkerCache).
+    param($Context)
+    $hours = $script:MinAgeHours.BrowserCache
+    $local = $Context.LocalAppData
+
+    foreach ($browser in (Get-ChromiumBrowserList)) {
+        Get-ChromiumCacheTarget -UserDataPath (Join-PathSafe $local $browser.Path) -Guard $browser.Process -GuardName $browser.Name -MinAgeHours $hours
+    }
+
+    # Opera keeps its profile in Roaming; only the cache folders live under Local.
     foreach ($opera in @('Opera Software\Opera Stable', 'Opera Software\Opera GX Stable')) {
-        foreach ($relative in @('Cache', 'Default\Cache')) {
+        foreach ($relative in @('Cache', 'Code Cache', 'GPUCache', 'Default\Cache', 'Default\Code Cache', 'Default\GPUCache')) {
             $path = Join-PathSafe (Join-PathSafe $local $opera) $relative
             if ($path -and [IO.Directory]::Exists($path)) {
                 New-CleanupTarget -Path $path -MinAgeHours $hours -RemoveEmptyDirs $false -Guard @('opera') -GuardName 'Opera'
@@ -1182,10 +1266,53 @@ function Get-BrowserCacheTarget {
     }
 
     foreach ($profileDir in (Get-ChildDirectory (Join-PathSafe $local 'Mozilla\Firefox\Profiles'))) {
-        $path = Join-PathSafe $profileDir 'cache2'
-        if ([IO.Directory]::Exists($path)) {
-            New-CleanupTarget -Path $path -MinAgeHours $hours -RemoveEmptyDirs $false -Guard @('firefox') -GuardName 'Firefox'
+        foreach ($cache in $script:FirefoxCaches) {
+            $path = Join-PathSafe $profileDir $cache
+            if ([IO.Directory]::Exists($path)) {
+                New-CleanupTarget -Path $path -MinAgeHours $hours -RemoveEmptyDirs $false -Guard @('firefox') -GuardName 'Firefox'
+            }
         }
+    }
+}
+
+function Get-ServiceWorkerCacheTarget {
+    <#
+        Cache Storage written by the sites' service workers: offline copies of pages, scripts
+        and media, often the largest folder of a browser profile. The registrations
+        (Service Worker\Database) and the script cache are kept, so sites keep working and
+        download their files again. Only while the browser is closed.
+    #>
+    param($Context)
+    $hours = $script:MinAgeHours.ServiceWorkerCache
+    foreach ($browser in (Get-ChromiumBrowserList)) {
+        Get-ChromiumCacheTarget -UserDataPath (Join-PathSafe $Context.LocalAppData $browser.Path) -Guard $browser.Process -GuardName $browser.Name -MinAgeHours $hours -ServiceWorker
+    }
+}
+
+function Get-AppCacheTarget {
+    <#
+        Chromium caches inside the WebView2 folders of desktop apps (new Teams, WhatsApp,
+        new Outlook): the same disposable folders as the browser caches plus their Service
+        Worker Cache Storage. Sign-in, settings, IndexedDB and messages are kept. Only
+        LocalAppData is used; only while the app is closed.
+    #>
+    param($Context)
+    $hours = $script:MinAgeHours.AppCache
+    $local = $Context.LocalAppData
+    $packages = Join-PathSafe $local 'Packages'
+
+    $apps = New-Object System.Collections.Generic.List[hashtable]
+    $apps.Add(@{ Name = 'Microsoft Teams'; Path = (Join-PathSafe $packages 'MSTeams_8wekyb3d8bbwe\LocalCache\Microsoft\MSTeams\EBWebView'); Process = @('ms-teams', 'msteams') })
+    $apps.Add(@{ Name = 'Outlook'; Path = (Join-PathSafe $local 'Microsoft\Olk\EBWebView'); Process = @('olk') })
+    foreach ($package in (Get-ChildDirectory $packages)) {
+        if ([IO.Path]::GetFileName($package) -like '5319275A.WhatsAppDesktop_*') {
+            $apps.Add(@{ Name = 'WhatsApp'; Path = (Join-PathSafe $package 'LocalCache\EBWebView'); Process = @('WhatsApp', 'WhatsApp.Root') })
+        }
+    }
+
+    foreach ($app in $apps) {
+        Get-ChromiumCacheTarget -UserDataPath $app.Path -Guard $app.Process -GuardName $app.Name -MinAgeHours $hours
+        Get-ChromiumCacheTarget -UserDataPath $app.Path -Guard $app.Process -GuardName $app.Name -MinAgeHours $hours -ServiceWorker
     }
 }
 
@@ -1224,6 +1351,8 @@ function Get-CategoryCatalog {
         @{ Id = 'RecycleBin'; Group = 'Advanced'; Kind = 'RecycleBin'; Builder = $null; RequiresAdmin = $false },
         @{ Id = 'CrashDumps'; Group = 'Advanced'; Kind = 'Files'; Builder = 'Get-CrashDumpTarget'; RequiresAdmin = $false },
         @{ Id = 'BrowserCache'; Group = 'Advanced'; Kind = 'Files'; Builder = 'Get-BrowserCacheTarget'; RequiresAdmin = $false },
+        @{ Id = 'ServiceWorkerCache'; Group = 'Advanced'; Kind = 'Files'; Builder = 'Get-ServiceWorkerCacheTarget'; RequiresAdmin = $false },
+        @{ Id = 'AppCache'; Group = 'Advanced'; Kind = 'Files'; Builder = 'Get-AppCacheTarget'; RequiresAdmin = $false },
         @{ Id = 'ShaderCache'; Group = 'Advanced'; Kind = 'Files'; Builder = 'Get-ShaderCacheTarget'; RequiresAdmin = $false },
         @{ Id = 'ComponentStore'; Group = 'Advanced'; Kind = 'ComponentStore'; Builder = $null; RequiresAdmin = $true }
     )
@@ -2249,6 +2378,7 @@ function Show-Review {
         $action = if ($DryRun) { Get-UiText 'Menu.Simulate' } else { Get-UiText 'Menu.Clean' }
         $menu = '  [Enter] {0}   [1-{1}] {2}' -f $action, $number, (Get-UiText 'Menu.Toggle')
         if (-not $AdvancedVisible) { $menu += '   [A] ' + (Get-UiText 'Menu.Advanced') }
+        if (@($Scans | Where-Object { $_.BlockedBy.Count -gt 0 }).Count -gt 0) { $menu += '   [R] ' + (Get-UiText 'Menu.Rescan') }
         $menu += '   [Q] ' + (Get-UiText 'Menu.Quit')
         Write-Ui $menu Cyan
     }
@@ -2477,6 +2607,7 @@ function Write-RunLog {
         windows       = [ordered]@{ name = $WindowsInfo.Name; version = $WindowsInfo.DisplayVersion; build = $WindowsInfo.BuildText; arch = $WindowsInfo.Architecture }
         powershell    = [string]$PSVersionTable.PSVersion
         elevated      = $Context.IsAdmin
+        mode          = [string]$Options.Mode
         dryRun        = [bool]$Options.DryRun
         rebootPending = $Context.RebootPending
         categories    = @(foreach ($scan in $Scans) {
@@ -2574,7 +2705,7 @@ function Invoke-ElevatedRelaunch {
 #region Main
 
 function Get-DefaultSelection {
-    param($Scans, [string[]]$Include, [string[]]$Exclude)
+    param($Scans, [string[]]$Include, [string[]]$Exclude, [string]$Mode = 'Safe')
     $selection = @{}
     foreach ($scan in $Scans) {
         $id = $scan.Category.Id
@@ -2583,6 +2714,7 @@ function Get-DefaultSelection {
             $selected = $true
             if ($scan.Category.Kind -eq 'DeliveryOptimization' -and $scan.Bytes -lt $script:DeliveryOptimizationMinBytes) { $selected = $false }
         }
+        if ($Mode -eq 'Deep' -and $script:DeepCategoryIds -contains $id -and $scan.State -eq 'Ready') { $selected = $true }
         if ($Include -contains $id -and (Test-ScanSelectable $scan)) { $selected = $true }
         if ($Exclude -contains $id) { $selected = $false }
         $selection[$id] = $selected
@@ -2616,6 +2748,33 @@ function Invoke-ScanBatch {
     }
     Clear-StatusLine
     return , $scans
+}
+
+function Update-ScanBatch {
+    <#
+        Scans the same categories again (for example after the user closed a browser) and
+        keeps the user's choices for the categories that were already selectable. Categories
+        that just became selectable get the default selection of the current mode.
+    #>
+    param($Scans, [ref]$Selection, $Context, [string[]]$Include = @(), [string[]]$Exclude = @(), [string]$Mode = 'Safe')
+
+    $previous = $Selection.Value
+    $wasSelectable = @{}
+    foreach ($scan in $Scans) { $wasSelectable[$scan.Category.Id] = Test-ScanSelectable $scan }
+
+    $Context.RunningProcesses = Get-RunningProcessSet
+    $Context.ReferenceTimeUtc = [datetime]::UtcNow
+    $fresh = Invoke-ScanBatch -Categories @($Scans | ForEach-Object { $_.Category }) -Context $Context
+
+    # Not "$selection": PowerShell variable names are case-insensitive, so it would be the [ref] parameter.
+    $merged = Get-DefaultSelection -Scans $fresh -Include $Include -Exclude $Exclude -Mode $Mode
+    foreach ($scan in $fresh) {
+        $id = $scan.Category.Id
+        if (-not (Test-ScanSelectable $scan)) { $merged[$id] = $false; continue }
+        if ($wasSelectable[$id] -and $previous.ContainsKey($id)) { $merged[$id] = [bool]$previous[$id] }
+    }
+    $Selection.Value = $merged
+    return , $fresh
 }
 
 function Wait-BeforeExit {
@@ -2742,18 +2901,19 @@ function Invoke-Main {
     if ($context.Environment.TargetRejected) { $headerNotes.Add((Get-UiText 'Elevate.TargetRejected')) }
     if ($context.OtherUser) { $headerNotes.Add((Get-UiText 'Header.OtherUser')) }
     if ($context.RebootPending) { $headerNotes.Add((Get-UiText 'Header.RebootPending')) }
+    if ($Options.Mode -eq 'Deep') { $headerNotes.Add((Get-UiText 'Header.Deep')) }
     foreach ($note in $headerNotes) { Write-Ui ('  ' + $script:Ui.Warn + ' ' + $note) Yellow }
     if ($headerNotes.Count -gt 0) { Write-Ui '' }
 
     # Optional categories are scanned only when asked for: in Safe mode the first scan stays fast.
     $catalog = @(Get-CategoryCatalog)
     $advancedIncluded = @($include | Where-Object { $script:AdvancedCategoryIds -contains $_ })
-    $advancedVisible = $Options.Mode -eq 'Advanced' -or ($interactive -and $advancedIncluded.Count -gt 0)
+    $advancedVisible = @('Advanced', 'Deep') -contains $Options.Mode -or ($interactive -and $advancedIncluded.Count -gt 0)
     $toScan = @($catalog | Where-Object { $_.Group -eq 'Safe' -or $advancedVisible -or $advancedIncluded -contains $_.Id })
     $scans = Invoke-ScanBatch -Categories $toScan -Context $context
     if ($advancedIncluded.Count -gt 0) { $advancedVisible = $true }
 
-    $selection = Get-DefaultSelection -Scans $scans -Include $include -Exclude $exclude
+    $selection = Get-DefaultSelection -Scans $scans -Include $include -Exclude $exclude -Mode $Options.Mode
     $quit = $false
 
     if ($interactive) {
@@ -2780,6 +2940,11 @@ function Invoke-Main {
                     }
                     $advancedVisible = $true
                 }
+                continue
+            }
+            if ($answer -ieq 'r') {
+                # The user closed a browser or app: scan again with the current process list.
+                $scans = Update-ScanBatch -Scans $scans -Selection ([ref]$selection) -Context $context -Include $include -Exclude $exclude -Mode $Options.Mode
                 continue
             }
 

@@ -4,6 +4,7 @@ Classificação de cada local investigado:
 
 - **SAFE**: pré-selecionado na Limpeza segura.
 - **OPTIONAL**: só na Limpeza avançada, nunca pré-selecionado, com o efeito colateral exibido.
+- **OPTIONAL · Deep**: opcional nos modos Safe e Advanced; pré-selecionado apenas quando o usuário pede `-Mode Deep`.
 - **DO NOT CLEAN**: a ferramenta não oferece.
 
 A pergunta usada em cada item foi: *apagar isto libera espaço de verdade, ou só obriga o Windows a recriar algo útil?*
@@ -19,11 +20,13 @@ Fontes consultadas em 2026-10-05; links ao final.
 | Store apps `TempState`, `AC\Temp` | **SAFE** | Conteúdo, arquivos com 24 h ou mais | A Microsoft documenta que o sistema pode apagar essa pasta "a qualquer momento" [5] |
 | Delivery Optimization | **SAFE** (admin), pré-selecionado se ≥ 100 MB | `Delete-DeliveryOptimizationCache -Force` (sem `-IncludePinnedFiles`) | Mecanismo oficial [4]. O Windows já limita o cache (3 dias, 20% do disco), então só vale a pena quando está grande |
 | Lixeira | **OPTIONAL** | `SHQueryRecycleBin` / `SHEmptyRecycleBin` [8], com confirmação explícita | O usuário pode precisar restaurar algo |
-| `MEMORY.DMP`, `Minidump`, `LiveKernelReports` | **OPTIONAL** (admin) | Só `*.dmp` com 30 dias ou mais | Ocupam GB, mas são evidência de telas azuis e travamentos |
-| `%LOCALAPPDATA%\CrashDumps` | **OPTIONAL** | Só `*.dmp` com 30 dias ou mais | Dumps locais de apps (WER LocalDumps [11]); o Windows já mantém 10 por padrão |
-| WER `ReportArchive` / `ReportQueue` | **OPTIONAL** | Arquivos com 30 dias ou mais (`%ProgramData%` exige admin) | A pasta de sistema é documentada [11]; a por usuário existe na prática, mas não é documentada. O WER já limita a quantidade (1000/50 relatórios) |
-| Cache de navegadores | **OPTIONAL** | Só `Cache`, `Code Cache`, `GPUCache` (Chromium) e `cache2` (Firefox), com o navegador **fechado** | O cache é reconstruído; os dados pessoais ficam em outras pastas, que nunca são tocadas |
-| DirectX / shader cache | **OPTIONAL** | `D3DSCache` e caches NVIDIA, AMD e Intel, arquivos com 1 h ou mais | Reconstruído, mas causa engasgos e recompilação. Útil após trocar de driver |
+| `MEMORY.DMP`, `Minidump`, `LiveKernelReports` | **OPTIONAL · Deep** (admin) | Só `*.dmp` com 30 dias ou mais | Ocupam GB, mas são evidência de telas azuis e travamentos |
+| `%LOCALAPPDATA%\CrashDumps` | **OPTIONAL · Deep** | Só `*.dmp` com 30 dias ou mais | Dumps locais de apps (WER LocalDumps [11]); o Windows já mantém 10 por padrão |
+| WER `ReportArchive` / `ReportQueue` | **OPTIONAL · Deep** | Arquivos com 30 dias ou mais (`%ProgramData%` exige admin) | A pasta de sistema é documentada [11]; a por usuário existe na prática, mas não é documentada. O WER já limita a quantidade (1000/50 relatórios) |
+| Cache de navegadores | **OPTIONAL · Deep** | Por perfil Chromium (Chrome, Edge, Brave, Vivaldi, Chromium): `Cache`, `Code Cache`, `GPUCache`, `DawnCache`, `DawnGraphiteCache`, `DawnWebGPUCache`, `Media Cache`. Na pasta `User Data`: `GrShaderCache`, `GraphiteDawnCache`, `ShaderCache`, `component_crx_cache`, `extensions_crx_cache`. Opera: `Cache`, `Code Cache`, `GPUCache` da pasta Local. Firefox (perfil local): `cache2`, `startupCache`, `thumbnails`, `jumpListCache`. Sempre com o navegador **fechado** | Tudo é cache reconstruído ou baixado de novo sob demanda (HTTP, JavaScript compilado, shaders, pacotes de componentes). Perfis são as subpastas com `Preferences`; cookies, senhas, histórico, favoritos, Local Storage, IndexedDB e `File System` ficam em outras pastas, que nunca são tocadas |
+| Cache offline de sites (`Service Worker\CacheStorage`) | **OPTIONAL · Deep** | Só a pasta `CacheStorage` de cada perfil do Chrome, Edge, Brave, Vivaldi e Chromium, com o navegador **fechado**. Os registros (`Service Worker\Database`) e o `ScriptCache` ficam. Opera fica de fora (perfil em `AppData\Roaming`). No modo Deep, `-Exclude ServiceWorkerCache` preserva esse cache | É a Cache API dos sites [15]: cópias de páginas, scripts e mídia que o site baixa de novo. Costuma ser a maior pasta do perfil (vários GB). Separada do cache comum porque apps web que funcionam offline perdem a cópia local, e a recuperação **depende do site**: alguns só repovoam a Cache Storage na instalação ou atualização do service worker [17], então uma visita online pode não restaurar o uso offline. Um service worker que responde apenas com recursos do cache faz o site **falhar até com conexão** enquanto a cópia não é recriada [17] |
+| Cache de apps WebView2 (novo Teams, WhatsApp, novo Outlook) | **OPTIONAL · Deep** | As mesmas pastas de cache do Chromium e o `Service Worker\CacheStorage` dentro de `EBWebView`, só em `%LOCALAPPDATA%`, com o app **fechado** (`ms-teams`, `WhatsApp`, `olk`) | O WebView2 usa a mesma estrutura de pastas do Edge [16]. Login, configurações, IndexedDB e mensagens ficam em outras pastas. `AppData\Roaming` continua fora (por isso Discord, Slack e VS Code não entram) |
+| DirectX / shader cache | **OPTIONAL · Deep** | `D3DSCache` e caches NVIDIA, AMD e Intel, arquivos com 1 h ou mais | Reconstruído, mas causa engasgos e recompilação. Útil após trocar de driver |
 | Component Store (WinSxS) | **OPTIONAL** (admin) | `DISM /English /Online /Cleanup-Image /AnalyzeComponentStore`; só se "Cleanup Recommended: Yes", então `/StartComponentCleanup` | Método suportado [1][2]. **Nunca `/ResetBase`**, que impede desinstalar atualizações [1] |
 | **Prefetch** | **DO NOT CLEAN** | Não implementado | Ver seção abaixo |
 | `SoftwareDistribution` | **DO NOT CLEAN** | Recusado pela política | Estado do Windows Update. A limpeza suportada de componentes antigos é o DISM. Parar `wuauserv` e apagar a pasta é procedimento de *reparo*, não de limpeza |
@@ -38,7 +41,7 @@ Fontes consultadas em 2026-10-05; links ao final.
 | Cache de ícones (`iconcache_*.db`) | **DO NOT CLEAN** | Não implementado | Sempre em uso; apagar com o Explorador aberto não tem efeito, e o ganho é desprezível |
 | INetCache (WinINet) | **DO NOT CLEAN** | Não implementado | Contém `Content.Outlook`, onde ficam anexos abertos no Outlook, possivelmente editados e não salvos. O Storage Sense cuida desse cache |
 | Downloads, Documentos, Desktop, Imagens, Vídeos, Músicas, Favoritos, OneDrive | **DO NOT CLEAN** | Recusado (NoTouch) | Dados pessoais nunca são lixo, mesmo que antigos |
-| `AppData\Roaming`, perfis de navegador (cookies, senhas, sessões, histórico, favoritos, Local Storage, IndexedDB, Service Worker) | **DO NOT CLEAN** | Recusado / fora do escopo | Dados de aplicativos e credenciais |
+| `AppData\Roaming`, perfis de navegador (cookies, senhas, sessões, histórico, favoritos, Local Storage, IndexedDB, `File System`, registros de Service Worker) | **DO NOT CLEAN** | Recusado / fora do escopo | Dados de aplicativos e credenciais |
 | Placeholders do OneDrive (atributos de nuvem) | **DO NOT CLEAN** | Ignorados na varredura e na exclusão | Apagar um placeholder pode apagar o arquivo na nuvem |
 | Registro, SAM, hives | **DO NOT CLEAN** | Só leitura de `ProfileList`, `Shell Folders`, `PendingFileRenameOperations` e chaves de reboot | Nada de "registry cleaner" |
 | Serviços (SysMain, Search, Update, Defender, BITS, DO, telemetria) | **DO NOT CLEAN** | Nenhuma chamada a serviços | Ferramenta de limpeza de arquivos, não de "tuning" |
@@ -63,7 +66,12 @@ Fontes consultadas em 2026-10-05; links ao final.
 | Store `TempState` | 24 h | O sistema pode apagar a qualquer momento [5]; o prazo só evita atrapalhar um app aberto |
 | Dumps / WER | 30 dias | Preserva evidência recente; o WER já limita a quantidade [11] |
 | Shader cache | 1 h | Arquivos de um jogo aberto estão em uso e são ignorados de qualquer forma |
-| Cache de navegador | 0 | Só é limpo com o navegador fechado, verificado na varredura e de novo na limpeza |
+| Cache de navegador, cache offline de sites | 0 | Só é limpo com o navegador fechado, verificado na varredura e de novo na limpeza |
+| Cache de apps WebView2 | 0 | Só é limpo com o app fechado, verificado na varredura e de novo na limpeza |
+
+## Modo Deep
+
+`-Mode Deep` existe para quem abre `%TEMP%` ou a pasta do navegador depois da limpeza e ainda encontra gigabytes: na Limpeza segura todo cache é opcional, então ele nunca era limpo sem uma escolha explícita. O modo Deep pré-seleciona `CrashDumps`, `BrowserCache`, `ServiceWorkerCache`, `AppCache` e `ShaderCache`. Continua valendo tudo o que está acima: idade mínima, navegador/app fechado, links ignorados, arquivos em uso preservados. **Nunca** pré-seleciona a Lixeira nem o DISM, e `-Exclude` continua tendo prioridade. O cache offline (Service Worker) aparece em duas categorias: `ServiceWorkerCache` para os navegadores e `AppCache` para os apps WebView2; para preservar os dois, use `-Exclude ServiceWorkerCache,AppCache`. Na tela interativa, `[R]` analisa de novo depois que o usuário fecha o navegador ou o app.
 
 ## Arquivos em uso e acesso negado
 
@@ -85,3 +93,6 @@ O comportamento esperado num Windows ativo é: violação de compartilhamento ou
 12. Microsoft Support — *Delete your previous version of Windows*: https://support.microsoft.com/en-us/windows/deployment/install-upgrade/delete-your-previous-version-of-windows
 13. Microsoft Learn — `ipconfig`: https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/ipconfig
 14. Microsoft Tech Community (blog da equipe de Storage, 2019) — *Windows 10 and Storage Sense*, que anunciou a substituição gradual do Disk Cleanup pelo Storage Sense: https://techcommunity.microsoft.com/blog/filecab/windows-10-and-storage-sense/428270
+15. MDN — *CacheStorage* (Cache API dos service workers): https://developer.mozilla.org/en-US/docs/Web/API/CacheStorage
+16. Microsoft Learn — *Manage user data folders* (WebView2, pasta `EBWebView`): https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/user-data-folder
+17. MDN — *Using Service Workers* (cache preenchido no evento `install`): https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API/Using_Service_Workers
